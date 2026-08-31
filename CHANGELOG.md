@@ -1,5 +1,10 @@
 # Changelog
 
+## main
+
+- Fixed `auth login` to force a fresh Apple authentication instead of reusing
+  a session whose Find My authorization has expired.
+
 ## 1.0.0 - 2026-08-31
 
 - Added a Docker Compose backend for Apple's real Find My Play Sound command.

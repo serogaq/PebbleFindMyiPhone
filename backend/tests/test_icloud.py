@@ -14,6 +14,7 @@ from findmy_backend.icloud import (
     AuthenticationRequired,
     SoundUnavailable,
     TargetDeviceNotFound,
+    authenticate,
     list_devices,
     load_authenticated_session,
     play_sound,
@@ -48,6 +49,18 @@ class FakeDevices:
 
     def __getitem__(self, key):
         return self._devices[key]
+
+
+def test_explicit_login_forces_credential_refresh(monkeypatch):
+    service = SimpleNamespace(authenticate=Mock())
+    create_service = Mock(return_value=service)
+    monkeypatch.setattr("findmy_backend.icloud.create_service", create_service)
+    settings = Mock()
+
+    assert authenticate(settings, "not-stored-password") is service
+
+    create_service.assert_called_once_with(settings, password="not-stored-password")
+    service.authenticate.assert_called_once_with(force_refresh=True)
 
 
 def test_list_devices_never_returns_location():
