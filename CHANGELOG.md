@@ -1,5 +1,11 @@
 # Changelog
 
+## main
+
+- Added automatic English and Russian localization for the Pebble watchapp and
+  phone Settings, with directory-based language discovery and English fallback.
+- Added app version and UTC build timestamp information to Settings.
+
 ## 1.0.1 - 2026-08-31 / backend
 
 - Fixed `auth login` to force a fresh Apple authentication instead of reusing
