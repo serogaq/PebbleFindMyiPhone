@@ -24,7 +24,7 @@ application on iOS.
 
 ## Install the Pebble application
 
-The RePebble App Store listing will be linked here after publication:
+Find My iPhone is available in the RePebble App Store:
 
 **[Install Find My iPhone from the RePebble App Store](https://apps.repebble.com/d71d5cfc5ec6470ebe8745d2)**
 
