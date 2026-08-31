@@ -3,8 +3,10 @@
 var Clay = require('@rebble/clay');
 var api = require('./lib/api');
 var configPage = require('./lib/config-page');
+var localization = require('./lib/localization');
 var protocol = require('./lib/protocol');
 var settingsStore = require('./lib/settings');
+var settingsLocalization = require('./lib/settings-locales.auto');
 
 var activeClay = null;
 
@@ -53,15 +55,20 @@ Pebble.addEventListener('appmessage', function(event) {
 });
 
 Pebble.addEventListener('showConfiguration', function() {
-  var strings = configPage.stringsForWatch(Pebble.getActiveWatchInfo());
+  var phoneLocale = typeof navigator !== 'undefined' && navigator.language ?
+    navigator.language : 'en';
+  var strings = localization.resolve(settingsLocalization.locales, phoneLocale);
   var userData = {
     strings: strings,
     addressPattern: settingsStore.ADDRESS_PATTERN_SOURCE
   };
-  activeClay = new Clay(configPage.buildConfig(strings), configPage.customClay, {
-    autoHandleEvents: false,
-    userData: userData
-  });
+  activeClay = new Clay(
+    configPage.buildConfig(strings, settingsLocalization.build),
+    configPage.customClay,
+    {
+      autoHandleEvents: false,
+      userData: userData
+    });
   // With manual event handling Clay is constructed after Pebble's `ready`
   // event, so its deferred metadata population will not run for this instance.
   // Populate the data consumed by customClay before generateUrl() serializes it.

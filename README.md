@@ -15,7 +15,9 @@ iPhone / system Find My alert
 
 The watch application supports Pebble Time 2, Pebble Round 2, Pebble 2 Duo,
 and Pebble 2. The current phone companion is tested with the official Pebble
-application on iOS.
+application on iOS. The watch interface follows the PebbleOS language, while
+the Settings page follows the iPhone language. English and Russian are
+currently included, with English used as the fallback.
 
 > [!WARNING]
 > Apple does not provide a supported public API for this operation. The backend

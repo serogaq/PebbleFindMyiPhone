@@ -1,3 +1,6 @@
 build/
 node_modules/
 .lock-waf*
+src/c/localization.auto.c
+src/c/localization.auto.h
+src/pkjs/lib/settings-locales.auto.js

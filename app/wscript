@@ -4,6 +4,7 @@
 # Feel free to customize this to your needs.
 #
 import os.path
+import subprocess
 
 top = '.'
 out = 'build'
@@ -24,6 +25,10 @@ def configure(ctx):
 
 
 def build(ctx):
+    subprocess.check_call(
+        [os.environ.get('NODE', 'node'), 'scripts/generate-localization.js'],
+        cwd=ctx.path.abspath(),
+    )
     ctx.load('pebble_sdk')
 
     build_worker = os.path.exists('worker_src')
