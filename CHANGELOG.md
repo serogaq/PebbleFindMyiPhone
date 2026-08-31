@@ -1,6 +1,6 @@
 # Changelog
 
-## main
+## 1.1.0 - 2026-08-31 / app
 
 - Added automatic English and Russian localization for the Pebble watchapp and
   phone Settings, with directory-based language discovery and English fallback.

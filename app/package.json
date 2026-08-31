@@ -1,7 +1,7 @@
 {
   "name": "pebble-find-my-iphone",
   "author": "serogaq",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Trigger Find My iPhone Play Sound from your Pebble watch",
   "keywords": ["pebble-app", "find-my", "iphone"],
   "private": true,
@@ -9,7 +9,7 @@
     "node": "^20.19.0 || ^22.13.0 || >=24"
   },
   "scripts": {
-    "lint": "eslint src/pkjs tests eslint.config.js",
+    "lint": "eslint src/pkjs scripts tests eslint.config.js",
     "test": "node tests/run.js",
     "build": "pebble build",
     "check": "npm run lint && npm test && pebble build"
