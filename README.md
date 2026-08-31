@@ -53,7 +53,7 @@ Edit `.env` and set at least:
 ```dotenv
 # Use a published backend release, or keep the defaults and build locally.
 BACKEND_IMAGE=ghcr.io/serogaq/pebble-find-my-iphone-backend
-BACKEND_TAG=<version>
+BACKEND_TAG=latest
 
 APPLE_ID=owner@example.com
 APPLE_REGION=global
