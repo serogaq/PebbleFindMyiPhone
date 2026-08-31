@@ -95,7 +95,11 @@ def authenticate(settings: Settings, password: str) -> PyiCloudService:
 
     service = create_service(settings, password=password)
     try:
-        service.authenticate()
+        # `auth login` is an explicit renewal operation. Without force_refresh,
+        # pyicloud may validate an existing general iCloud token, skip the
+        # supplied password entirely, and leave an expired Find My token in
+        # place even though login appears successful.
+        service.authenticate(force_refresh=True)
     except (PyiCloudFailedLoginException, PyiCloudAuthRequiredException) as exc:
         raise AuthenticationRequired(
             "Apple rejected the credentials or the account requires additional setup"
