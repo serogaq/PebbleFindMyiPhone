@@ -1,5 +1,6 @@
 #include <pebble.h>
-#include <string.h>
+
+#include "localization.auto.h"
 
 typedef enum {
   REQUEST_CHECK_STATUS = 1,
@@ -34,12 +35,7 @@ static uint32_t s_sequence;
 static uint32_t s_pending_sequence;
 static RequestKind s_pending_kind;
 static bool s_busy;
-static bool s_is_ru;
 static uint8_t s_animation_step;
-
-static const char *prv_text(const char *english, const char *russian) {
-  return s_is_ru ? russian : english;
-}
 
 static void prv_cancel_timer(AppTimer **timer) {
   if (*timer) {
@@ -59,16 +55,16 @@ static void prv_show_ready(void) {
   prv_cancel_timer(&s_animation_timer);
   prv_cancel_timer(&s_request_timer);
   prv_set_screen(
-      prv_text("Find My iPhone", "Найти iPhone"),
-      prv_text("Ready", "Готово"),
-      prv_text("Double-click SELECT", "Дважды нажмите SELECT"));
+      localization_get(WATCH_STRING_APP_TITLE),
+      localization_get(WATCH_STRING_READY),
+      localization_get(WATCH_STRING_DOUBLE_CLICK_SELECT));
 }
 
 static void prv_animation_tick(void *context) {
   static char buffer[32];
   const char *base = s_pending_kind == REQUEST_PLAY_SOUND
-                         ? prv_text("Sending", "Отправляем")
-                         : prv_text("Checking", "Проверяем");
+                         ? localization_get(WATCH_STRING_SENDING)
+                         : localization_get(WATCH_STRING_CHECKING);
   s_animation_step = (s_animation_step + 1) % 4;
   snprintf(buffer, sizeof(buffer), "%s%.*s", base, s_animation_step, "...");
   text_layer_set_text(s_body_layer, buffer);
@@ -83,49 +79,49 @@ static void prv_start_animation(RequestKind kind) {
 }
 
 static void prv_show_error(ResultCode code) {
-  const char *body = prv_text("Request failed", "Ошибка запроса");
-  const char *footer = prv_text("Double-click to retry", "Дважды нажмите для повтора");
+  const char *body = localization_get(WATCH_STRING_REQUEST_FAILED);
+  const char *footer = localization_get(WATCH_STRING_DOUBLE_CLICK_RETRY);
 
   switch (code) {
     case RESULT_CONFIG_MISSING:
-      body = prv_text("Settings required", "Нужны настройки");
-      footer = prv_text("Pebble app > Settings", "Pebble > Settings");
+      body = localization_get(WATCH_STRING_SETTINGS_REQUIRED);
+      footer = localization_get(WATCH_STRING_OPEN_PEBBLE_SETTINGS);
       break;
     case RESULT_CONFIG_INVALID:
-      body = prv_text("Invalid backend settings", "Ошибка настроек backend");
-      footer = prv_text("Check address and token", "Проверьте адрес и токен");
+      body = localization_get(WATCH_STRING_INVALID_BACKEND_SETTINGS);
+      footer = localization_get(WATCH_STRING_CHECK_ADDRESS_AND_TOKEN);
       break;
     case RESULT_BACKEND_UNAVAILABLE:
-      body = prv_text("Backend unavailable", "Backend недоступен");
+      body = localization_get(WATCH_STRING_BACKEND_UNAVAILABLE);
       break;
     case RESULT_API_UNAUTHORIZED:
-      body = prv_text("Invalid backend token", "Неверный токен backend");
-      footer = prv_text("Update app Settings", "Обновите Settings");
+      body = localization_get(WATCH_STRING_INVALID_BACKEND_TOKEN);
+      footer = localization_get(WATCH_STRING_UPDATE_APP_SETTINGS);
       break;
     case RESULT_APPLE_AUTH_REQUIRED:
-      body = prv_text("Apple sign-in required", "Нужен вход в Apple");
-      footer = prv_text("Run auth login on server", "Запустите auth login");
+      body = localization_get(WATCH_STRING_APPLE_SIGN_IN_REQUIRED);
+      footer = localization_get(WATCH_STRING_RUN_AUTH_LOGIN);
       break;
     case RESULT_TARGET_NOT_FOUND:
-      body = prv_text("iPhone not found", "iPhone не найден");
-      footer = prv_text("Check server target ID", "Проверьте target ID");
+      body = localization_get(WATCH_STRING_IPHONE_NOT_FOUND);
+      footer = localization_get(WATCH_STRING_CHECK_SERVER_TARGET_ID);
       break;
     case RESULT_SOUND_UNAVAILABLE:
-      body = prv_text("Play Sound unavailable", "Звук сейчас недоступен");
+      body = localization_get(WATCH_STRING_PLAY_SOUND_UNAVAILABLE);
       break;
     case RESULT_RATE_LIMITED:
-      body = prv_text("Please wait", "Подождите");
-      footer = prv_text("Triggered too recently", "Слишком частый запуск");
+      body = localization_get(WATCH_STRING_PLEASE_WAIT);
+      footer = localization_get(WATCH_STRING_TRIGGERED_TOO_RECENTLY);
       break;
     case RESULT_DEVICE_LOOKUP_FAILED:
-      body = prv_text("Apple lookup failed", "Ошибка поиска Apple");
+      body = localization_get(WATCH_STRING_APPLE_LOOKUP_FAILED);
       break;
     case RESULT_OUTCOME_UNKNOWN:
-      body = prv_text("Result unknown", "Результат неизвестен");
-      footer = prv_text("Sound may have started", "Звук мог запуститься");
+      body = localization_get(WATCH_STRING_RESULT_UNKNOWN);
+      footer = localization_get(WATCH_STRING_SOUND_MAY_HAVE_STARTED);
       break;
     case RESULT_APPLE_REQUEST_FAILED:
-      body = prv_text("Apple request failed", "Ошибка запроса Apple");
+      body = localization_get(WATCH_STRING_APPLE_REQUEST_FAILED);
       break;
     case RESULT_API_ERROR:
     default:
@@ -135,7 +131,7 @@ static void prv_show_error(ResultCode code) {
   s_busy = false;
   prv_cancel_timer(&s_animation_timer);
   prv_cancel_timer(&s_request_timer);
-  prv_set_screen(prv_text("Find My iPhone", "Найти iPhone"), body, footer);
+  prv_set_screen(localization_get(WATCH_STRING_APP_TITLE), body, footer);
   vibes_double_pulse();
 }
 
@@ -150,9 +146,9 @@ static void prv_show_success(void) {
   prv_cancel_timer(&s_request_timer);
   prv_cancel_timer(&s_success_timer);
   prv_set_screen(
-      prv_text("Find My iPhone", "Найти iPhone"),
-      prv_text("Command sent", "Команда отправлена"),
-      prv_text("Listen for the Find My alert", "Слушайте сигнал Find My"));
+      localization_get(WATCH_STRING_APP_TITLE),
+      localization_get(WATCH_STRING_COMMAND_SENT),
+      localization_get(WATCH_STRING_LISTEN_FOR_FIND_MY_ALERT));
   vibes_short_pulse();
   s_success_timer = app_timer_register(3500, prv_success_timeout, NULL);
 }
@@ -305,9 +301,9 @@ static void prv_window_load(Window *window) {
   layer_add_child(window_layer, text_layer_get_layer(s_footer_layer));
 
   prv_set_screen(
-      prv_text("Find My iPhone", "Найти iPhone"),
-      prv_text("Starting", "Запуск"),
-      prv_text("Checking backend", "Проверяем backend"));
+      localization_get(WATCH_STRING_APP_TITLE),
+      localization_get(WATCH_STRING_STARTING),
+      localization_get(WATCH_STRING_CHECKING_BACKEND));
 }
 
 static void prv_window_unload(Window *window) {
@@ -317,8 +313,7 @@ static void prv_window_unload(Window *window) {
 }
 
 static void prv_init(void) {
-  const char *locale = i18n_get_system_locale();
-  s_is_ru = locale && strncmp(locale, "ru", 2) == 0;
+  localization_init(i18n_get_system_locale());
 
   s_window = window_create();
   window_set_background_color(s_window, GColorWhite);

@@ -2,11 +2,15 @@
 
 var assert = require('assert');
 var fs = require('fs');
+var os = require('os');
 var path = require('path');
 var api = require('../src/pkjs/lib/api');
 var configPage = require('../src/pkjs/lib/config-page');
+var localization = require('../src/pkjs/lib/localization');
 var protocol = require('../src/pkjs/lib/protocol');
 var settings = require('../src/pkjs/lib/settings');
+var localizationGenerator = require('../scripts/generate-localization');
+var englishSettings = require('../localization/en/settings.json');
 
 var tests = [];
 function test(name, fn) {
@@ -157,25 +161,139 @@ test('manifest targets exactly the four modern watch platforms', function() {
 });
 
 test('settings page renders first and starts live status check after build', function() {
-  var config = configPage.buildConfig(configPage.EN);
+  var buildInfo = {version: '1.0.0', built_at: 'Aug 31, 2026 13:42:18 GMT'};
+  var config = configPage.buildConfig(englishSettings, buildInfo);
   var status = config.filter(function(item) { return item.id === 'status'; })[0];
   var token = config.filter(function(item) { return item.id === 'token'; })[0];
   var requiredNotice = config.filter(function(item) { return item.id === 'requiredNotice'; })[0];
   var license = config.filter(function(item) { return item.id === 'license'; })[0];
+  var version = config.filter(function(item) { return item.id === 'version'; })[0];
+  var builtAt = config.filter(function(item) { return item.id === 'builtAt'; })[0];
+  var submitIndex = config.map(function(item) { return item.type; }).indexOf('submit');
+  var statusHeadingIndex = config.findIndex(function(item) {
+    return item.type === 'heading' && item.defaultValue === englishSettings.status_title;
+  });
   var source = configPage.customClay.toString();
 
   assert(status, 'status component');
   assert(token, 'token component');
   assert(requiredNotice, 'required notice component');
   assert(license, 'license component');
+  assert(version, 'version component');
+  assert(builtAt, 'build time component');
+  assert.strictEqual(submitIndex + 1, statusHeadingIndex);
   assert.strictEqual(token.attributes.type, 'password');
   assert.strictEqual(requiredNotice.defaultValue,
     'Required Notice: Copyright © serogaq (https://github.com/serogaq/PebbleFindMyiPhone)');
   assert(license.defaultValue.indexOf('https://polyformproject.org/licenses/noncommercial/1.0.0') !== -1);
+  assert.strictEqual(version.defaultValue, 'Version: 1.0.0');
+  assert.strictEqual(builtAt.defaultValue, 'Built at: Aug 31, 2026 13:42:18 GMT');
+  assert.strictEqual(config.indexOf(version), config.indexOf(license) + 1);
+  assert.strictEqual(config.indexOf(builtAt), config.indexOf(version) + 1);
   assert(source.indexOf("clay.on(clay.EVENTS.AFTER_BUILD") !== -1);
   assert(source.indexOf('checkStatus();') !== -1);
   assert(source.indexOf("'/v1/status'") !== -1);
   assert(source.indexOf('setInterval') !== -1);
+});
+
+test('all locale directories contain complete non-empty watch and settings translations', function() {
+  var localizationRoot = path.join(__dirname, '../localization');
+  var localeNames = fs.readdirSync(localizationRoot, {withFileTypes: true})
+    .filter(function(entry) { return entry.isDirectory() && entry.name.charAt(0) !== '.'; })
+    .map(function(entry) { return entry.name; })
+    .sort();
+  var requiredNotice =
+    'Required Notice: Copyright © serogaq (https://github.com/serogaq/PebbleFindMyiPhone)';
+
+  assert(localeNames.indexOf('en') !== -1, 'English fallback locale');
+  ['watch.json', 'settings.json'].forEach(function(filename) {
+    var dictionaries = {};
+    var allKeys = {};
+    localeNames.forEach(function(locale) {
+      var dictionary = JSON.parse(fs.readFileSync(
+        path.join(localizationRoot, locale, filename), 'utf8'));
+      dictionaries[locale] = dictionary;
+      Object.keys(dictionary).forEach(function(key) {
+        assert(/^[a-z][a-z0-9_]*$/.test(key), locale + '/' + filename + ': ' + key);
+        assert.strictEqual(typeof dictionary[key], 'string', locale + '/' + filename + ': ' + key);
+        assert(dictionary[key].trim(), locale + '/' + filename + ': empty ' + key);
+        allKeys[key] = true;
+      });
+    });
+    var expectedKeys = Object.keys(allKeys).sort();
+    localeNames.forEach(function(locale) {
+      assert.deepStrictEqual(Object.keys(dictionaries[locale]).sort(), expectedKeys,
+        locale + '/' + filename + ' must contain exactly the same keys as every locale');
+    });
+  });
+  localeNames.forEach(function(locale) {
+    var dictionary = JSON.parse(fs.readFileSync(
+      path.join(localizationRoot, locale, 'settings.json'), 'utf8'));
+    assert.strictEqual(dictionary.required_notice, requiredNotice, locale + ' required notice');
+  });
+});
+
+test('locale resolver supports regional tags and falls back to English', function() {
+  var catalogs = {
+    en: {name: 'English'},
+    fr: {name: 'French'},
+    'pt-br': {name: 'Brazilian Portuguese'}
+  };
+
+  assert.strictEqual(localization.normalizeLocale('PT_BR'), 'pt-br');
+  assert.strictEqual(localization.resolve(catalogs, 'fr_FR').name, 'French');
+  assert.strictEqual(localization.resolve(catalogs, 'pt-BR').name, 'Brazilian Portuguese');
+  assert.strictEqual(localization.resolve(catalogs, 'de-DE').name, 'English');
+  assert.strictEqual(localization.resolve(catalogs, '').name, 'English');
+});
+
+test('build metadata uses package version and stable GMT formatting', function() {
+  var manifest = require('../package.json');
+  var buildTime = localizationGenerator.formatBuildTime(
+    new Date('2026-08-31T13:42:18Z'));
+  var rendered = localizationGenerator.renderSettingsModule({
+    en: {settings: englishSettings}
+  }, {version: manifest.version, built_at: buildTime});
+
+  assert.strictEqual(buildTime, 'Aug 31, 2026 13:42:18 GMT');
+  assert(rendered.indexOf('"version": "' + manifest.version + '"') !== -1);
+  assert(rendered.indexOf('"built_at": "Aug 31, 2026 13:42:18 GMT"') !== -1);
+});
+
+test('localization generator discovers a new folder without a language registry', function() {
+  var temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pebble-localization-'));
+  var localizationRoot = path.join(temporaryRoot, 'localization');
+  try {
+    ['en', 'fr'].forEach(function(locale) {
+      var directory = path.join(localizationRoot, locale);
+      fs.mkdirSync(directory, {recursive: true});
+      fs.writeFileSync(path.join(directory, 'watch.json'), JSON.stringify({title: locale}), 'utf8');
+      fs.writeFileSync(path.join(directory, 'settings.json'),
+        JSON.stringify(locale === 'en' ? {save: 'Save'} : {}), 'utf8');
+    });
+    var catalogs = localizationGenerator.loadCatalogs(localizationRoot);
+    var settingsModule = localizationGenerator.renderSettingsModule(catalogs, {
+      version: '1.0.0', built_at: 'Aug 31, 2026 13:42:18 GMT'
+    });
+    var cSource = localizationGenerator.renderCSource(catalogs, ['title']);
+
+    assert.deepStrictEqual(Object.keys(catalogs).sort(), ['en', 'fr']);
+    assert(settingsModule.indexOf('"fr"') !== -1);
+    assert(settingsModule.indexOf('"save": "Save"') !== -1);
+    assert(cSource.indexOf('{"fr", s_locale_fr}') !== -1);
+  } finally {
+    fs.rmSync(temporaryRoot, {recursive: true, force: true});
+  }
+});
+
+test('watch and Settings select their own system locale sources', function() {
+  var cSource = fs.readFileSync(path.join(__dirname, '../src/c/app.c'), 'utf8');
+  var pkjsSource = fs.readFileSync(path.join(__dirname, '../src/pkjs/index.js'), 'utf8');
+
+  assert(cSource.indexOf('localization_init(i18n_get_system_locale())') !== -1);
+  assert.strictEqual(cSource.indexOf('prv_text('), -1);
+  assert(pkjsSource.indexOf('navigator.language') !== -1);
+  assert.strictEqual(pkjsSource.indexOf('getActiveWatchInfo'), -1);
 });
 
 test('RePebble description contains only user-facing store copy', function() {

@@ -6,6 +6,7 @@ var jsGlobals = {
   console: 'readonly',
   localStorage: 'readonly',
   module: 'readonly',
+  navigator: 'readonly',
   Pebble: 'readonly',
   require: 'readonly',
   setInterval: 'readonly',
@@ -17,6 +18,7 @@ var nodeGlobals = {
   console: 'readonly',
   global: 'readonly',
   module: 'readonly',
+  process: 'readonly',
   require: 'readonly'
 };
 
@@ -36,7 +38,7 @@ module.exports = [
     }
   },
   {
-    files: ['tests/**/*.js', 'eslint.config.js'],
+    files: ['scripts/**/*.js', 'tests/**/*.js', 'eslint.config.js'],
     languageOptions: {
       ecmaVersion: 5,
       sourceType: 'commonjs',
