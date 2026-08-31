@@ -1,0 +1,7 @@
+**
+!backend/
+!backend/requirements.lock
+!backend/src/
+!backend/src/**
+!LICENSE.md
+!NOTICE

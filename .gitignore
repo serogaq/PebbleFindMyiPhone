@@ -1,0 +1,14 @@
+.DS_Store
+AGENTS.md
+.env
+backend/.env
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/.venv/
+backend/.coverage
+backend/htmlcov/
+backend/__pycache__/
+backend/src/**/__pycache__/
+backend/tests/**/__pycache__/
+backend/secrets/*
+!backend/secrets/.gitkeep

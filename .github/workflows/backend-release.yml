@@ -1,0 +1,133 @@
+name: Publish backend image
+
+on:
+  push:
+    tags:
+      - "*.*.*-backend"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/serogaq/pebble-find-my-iphone-backend
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require an x.y.z-backend tag from main
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! printf '%s\n' "$RELEASE_TAG" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-backend$'; then
+            printf 'error: tag must have the form x.y.z-backend, got %s\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if ! git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main; then
+            printf 'error: tag %s does not point to a commit in main\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${RELEASE_TAG%-backend}"
+          printf 'value=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+
+  backend-checks:
+    name: Backend tests and audit
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+          enable-cache: false
+
+      - name: Run backend checks
+        run: make backend-test backend-audit
+
+  app-checks:
+    name: App tests, ESLint and audit
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Run app checks
+        run: make app-test app-eslint app-audit
+
+  publish:
+    name: Build and publish backend image
+    needs: [validate-tag, backend-checks, app-checks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push versioned image
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          make backend-build \
+            BACKEND_IMAGE="$IMAGE_NAME" \
+            BACKEND_TAG="$VERSION" \
+            BACKEND_PLATFORMS=linux/amd64,linux/arm64 \
+            BACKEND_BUILD_FLAGS=--push
+
+      - name: Inspect published manifest
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: docker buildx imagetools inspect "$IMAGE_NAME:$VERSION"

@@ -1,0 +1,53 @@
+{
+  "name": "pebble-find-my-iphone",
+  "author": "serogaq",
+  "version": "1.0.0",
+  "description": "Trigger Find My iPhone Play Sound from your Pebble watch",
+  "keywords": ["pebble-app", "find-my", "iphone"],
+  "private": true,
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "scripts": {
+    "lint": "eslint src/pkjs tests eslint.config.js",
+    "test": "node tests/run.js",
+    "build": "pebble build",
+    "check": "npm run lint && npm test && pebble build"
+  },
+  "dependencies": {
+    "@rebble/clay": "1.1.0"
+  },
+  "devDependencies": {
+    "eslint": "10.9.1"
+  },
+  "pebble": {
+    "displayName": "Find My iPhone",
+    "uuid": "91d0ef11-0f9b-424a-9876-d96b6067e388",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": ["diorite", "emery", "flint", "gabbro"],
+    "watchapp": {
+      "watchface": false
+    },
+    "capabilities": ["configurable"],
+    "messageKeys": [
+      "REQUEST_KIND",
+      "REQUEST_SEQ",
+      "RESPONSE_KIND",
+      "RESULT_CODE",
+      "CONFIG_ADDRESS",
+      "CONFIG_SSL",
+      "CONFIG_TOKEN"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
+    }
+  }
+}

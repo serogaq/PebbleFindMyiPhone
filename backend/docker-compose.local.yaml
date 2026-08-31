@@ -1,0 +1,7 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      args:
+        IMAGE_VERSION: ${BACKEND_TAG:-local}

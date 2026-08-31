@@ -1,0 +1,1 @@
+Trigger the real Apple Find My Play Sound alert for your configured iPhone from a Pebble watch through your self-hosted backend.

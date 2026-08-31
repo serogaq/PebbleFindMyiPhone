@@ -1,0 +1,10 @@
+.env
+.pytest_cache
+.ruff_cache
+.DS_Store
+.coverage
+htmlcov
+secrets
+tests
+**/__pycache__
+*.pyc

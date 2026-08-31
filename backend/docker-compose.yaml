@@ -1,0 +1,46 @@
+services:
+  backend:
+    image: "${BACKEND_IMAGE:-pebble-find-my-iphone-backend}:${BACKEND_TAG:-latest}"
+    environment:
+      APPLE_ID: ${APPLE_ID:?Set APPLE_ID in backend/.env}
+      APPLE_REGION: ${APPLE_REGION:-global}
+      ICLOUD_WITH_FAMILY: ${ICLOUD_WITH_FAMILY:-false}
+      TARGET_DEVICE_ID: ${TARGET_DEVICE_ID:-}
+      ICLOUD_SESSION_DIR: /var/lib/find-my/session
+      ICLOUD_CONNECT_TIMEOUT_SECONDS: ${ICLOUD_CONNECT_TIMEOUT_SECONDS:-5}
+      ICLOUD_READ_TIMEOUT_SECONDS: ${ICLOUD_READ_TIMEOUT_SECONDS:-20}
+      API_TOKEN: ${API_TOKEN:-}
+      API_TOKEN_FILE: ${API_TOKEN_FILE:-}
+      BIND_ADDRESS: 0.0.0.0
+      PORT: 8080
+      PLAY_SOUND_COOLDOWN_SECONDS: ${PLAY_SOUND_COOLDOWN_SECONDS:-30}
+      IDEMPOTENCY_TTL_SECONDS: ${IDEMPOTENCY_TTL_SECONDS:-300}
+      DEVICE_CACHE_TTL_SECONDS: ${DEVICE_CACHE_TTL_SECONDS:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
+    volumes:
+      - icloud-session:/var/lib/find-my/session
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 100
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  icloud-session:

@@ -1,0 +1,443 @@
+name: Publish Pebble app
+
+on:
+  push:
+    tags:
+      - "*.*.*-app"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_UUID: 91d0ef11-0f9b-424a-9876-d96b6067e388
+  APPSTORE_API_BASE: https://appstore-api.repebble.com
+  PEBBLE_TOOL_VERSION: 5.0.40
+  PEBBLE_SDK_VERSION: 4.33.1
+
+jobs:
+  validate-tag:
+    name: Validate app release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require an x.y.z-app tag from main
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! printf '%s\n' "$RELEASE_TAG" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-app$'; then
+            printf 'error: tag must have the form x.y.z-app, got %s\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if ! git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main; then
+            printf 'error: tag %s does not point to a commit in main\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${RELEASE_TAG%-app}"
+          manifest_version="$(python3 -c 'import json; print(json.load(open("app/package.json"))["version"])')"
+          if test "$VERSION" != "$manifest_version"; then
+            printf 'error: tag version %s does not match app/package.json version %s\n' \
+              "$VERSION" "$manifest_version" >&2
+            exit 1
+          fi
+
+          VERSION="$VERSION" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          pattern = re.compile(
+              rf"^## {re.escape(version)}(?:\s+-[^\n]*)?\n(.*?)(?=^## |\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          matches = pattern.findall(changelog)
+          if len(matches) != 1 or not matches[0].strip():
+              raise SystemExit(
+                  f"error: CHANGELOG.md must contain one non-empty section for {version}"
+              )
+          PY
+
+          printf 'value=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+
+  app-checks:
+    name: App tests, ESLint and audit
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Run app checks
+        run: make app-test app-eslint app-audit
+
+  build:
+    name: Build release PBW
+    needs: [validate-tag, app-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+          enable-cache: false
+
+      - name: Install Pebble toolchain
+        run: |
+          uv tool install --python 3.12 "pebble-tool==$PEBBLE_TOOL_VERSION"
+          pebble sdk install "$PEBBLE_SDK_VERSION"
+          pebble --version
+          pebble sdk list
+
+      - name: Build and validate PBW
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          make app-build
+          python3 - "$VERSION" <<'PY'
+          import json
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          version = sys.argv[1]
+          pbw = Path("app/build/app.pbw")
+          if not pbw.is_file():
+              raise SystemExit(f"error: PBW was not created: {pbw}")
+
+          with zipfile.ZipFile(pbw) as archive:
+              appinfo = json.loads(archive.read("appinfo.json"))
+              companion = archive.read("pebble-js-app.js").decode("utf-8")
+
+          expected_platforms = {"diorite", "emery", "flint", "gabbro"}
+          if appinfo.get("versionLabel") != version:
+              raise SystemExit("error: PBW version does not match the release tag")
+          if str(appinfo.get("uuid", "")).lower() != "91d0ef11-0f9b-424a-9876-d96b6067e388":
+              raise SystemExit("error: PBW contains an unexpected application UUID")
+          if set(appinfo.get("targetPlatforms", [])) != expected_platforms:
+              raise SystemExit("error: PBW target platform set is incomplete or unexpected")
+          if "Required Notice: Copyright © serogaq (https://github.com/serogaq/PebbleFindMyiPhone)" not in companion:
+              raise SystemExit("error: PBW does not contain the required notice")
+          PY
+
+      - name: Prepare release files
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp app/build/app.pbw "dist/pebble-find-my-iphone-$VERSION.pbw"
+          cp LICENSE.md NOTICE dist/
+          VERSION="$VERSION" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          pattern = re.compile(
+              rf"^## {re.escape(version)}(?:\s+-[^\n]*)?\n(.*?)(?=^## |\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          notes = pattern.findall(changelog)[0].strip()
+          license_notice = (
+              "\n\n---\n\n"
+              "Required Notice: Copyright © serogaq "
+              "(https://github.com/serogaq/PebbleFindMyiPhone)\n\n"
+              "Licensed under [PolyForm Noncommercial 1.0.0]"
+              "(https://polyformproject.org/licenses/noncommercial/1.0.0).\n"
+          )
+          Path("dist/release-notes.md").write_text(
+              notes + license_notice,
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-release-${{ needs.validate-tag.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  github-release:
+    name: Publish GitHub Release
+    needs: [validate-tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: app-release-${{ needs.validate-tag.outputs.version }}
+          path: dist
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          assets=(
+            "dist/pebble-find-my-iphone-$VERSION.pbw"
+            dist/LICENSE.md
+            dist/NOTICE
+          )
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Find My iPhone $VERSION" \
+              --notes-file dist/release-notes.md
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Find My iPhone $VERSION" \
+              --notes-file dist/release-notes.md \
+              --verify-tag
+          fi
+
+  repebble-draft:
+    name: Publish RePebble draft
+    needs: [validate-tag, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download release notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: app-release-${{ needs.validate-tag.outputs.version }}
+          path: dist
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+          enable-cache: false
+
+      - name: Install Pebble toolchain
+        run: |
+          uv tool install --python 3.12 "pebble-tool==$PEBBLE_TOOL_VERSION"
+          pebble sdk install "$PEBBLE_SDK_VERSION"
+          make app-deps
+
+      - name: Patch pebble publish to preserve draft releases
+        run: |
+          tool_python="$(uv tool dir)/pebble-tool/bin/python"
+          publish_module="$("$tool_python" -c 'import pathlib; import pebble_tool.commands.publish as publish; print(pathlib.Path(publish.__file__).resolve())')"
+
+          published_literal='            "isPublished": "true",'
+          visible_literal='            "visible": "true",'
+          published_count="$(grep -Fxc "$published_literal" "$publish_module" || true)"
+          visible_count="$(grep -Fxc "$visible_literal" "$publish_module" || true)"
+
+          if test "$published_count" -ne 2 || test "$visible_count" -ne 1; then
+            printf '%s\n' \
+              'error: pebble-tool publish.py no longer matches the expected 5.0.40 code; refusing to apply the draft-release patch' >&2
+            exit 1
+          fi
+
+          sed -i \
+            -e 's/"isPublished": "true",/"isPublished": "true" if is_published else "false",/g' \
+            -e 's/"visible": "true",/"visible": "true" if is_published else "false",/' \
+            "$publish_module"
+
+          patched_published='            "isPublished": "true" if is_published else "false",'
+          patched_visible='            "visible": "true" if is_published else "false",'
+          patched_published_count="$(grep -Fxc "$patched_published" "$publish_module" || true)"
+          patched_visible_count="$(grep -Fxc "$patched_visible" "$publish_module" || true)"
+
+          if test "$patched_published_count" -ne 2 || test "$patched_visible_count" -ne 1; then
+            printf '%s\n' 'error: failed to verify the pebble-tool draft-release patch' >&2
+            exit 1
+          fi
+
+          "$tool_python" -m py_compile "$publish_module"
+
+      - name: Exchange Firebase refresh token
+        env:
+          FIREBASE_API_KEY: ${{ vars.PEBBLE_FIREBASE_API_KEY }}
+          FIREBASE_REFRESH_TOKEN: ${{ secrets.PEBBLE_FIREBASE_REFRESH_TOKEN }}
+        run: |
+          if test -z "$FIREBASE_API_KEY"; then
+            printf '%s\n' 'error: repository variable PEBBLE_FIREBASE_API_KEY is not configured' >&2
+            exit 1
+          fi
+          if test -z "$FIREBASE_REFRESH_TOKEN"; then
+            printf '%s\n' 'error: secret PEBBLE_FIREBASE_REFRESH_TOKEN is not configured' >&2
+            exit 1
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'grant_type=refresh_token' \
+            --data-urlencode "refresh_token=$FIREBASE_REFRESH_TOKEN" \
+            --output "$RUNNER_TEMP/firebase-token.json" \
+            "https://securetoken.googleapis.com/v1/token?key=$FIREBASE_API_KEY"
+
+          id_token="$(python3 - "$RUNNER_TEMP/firebase-token.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              token = json.load(source).get("id_token")
+          if not token:
+              raise SystemExit("error: Firebase response did not contain id_token")
+          print(token)
+          PY
+          )"
+          printf '::add-mask::%s\n' "$id_token"
+          printf 'PEBBLE_FIREBASE_ID_TOKEN=%s\n' "$id_token" >> "$GITHUB_ENV"
+
+      - name: Detect existing RePebble listing
+        id: listing
+        run: |
+          http_status="$(curl --silent --show-error \
+            --header "Authorization: Bearer $PEBBLE_FIREBASE_ID_TOKEN" \
+            --output "$RUNNER_TEMP/repebble-me.json" \
+            --write-out '%{http_code}' \
+            "$APPSTORE_API_BASE/api/v1/developer/me")"
+
+          case "$http_status" in
+            200)
+              exists="$(python3 - "$RUNNER_TEMP/repebble-me.json" "$APP_UUID" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              payload = json.load(source)
+          expected = sys.argv[2].lower()
+          lookup = (payload.get("app_lookup") or {}).get("by_app_uuid") or {}
+          print("true" if any(str(key).lower() == expected for key in lookup) else "false")
+          PY
+              )"
+              ;;
+            403)
+              code="$(python3 - "$RUNNER_TEMP/repebble-me.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as source:
+                  print(json.load(source).get("code", ""))
+          except (OSError, ValueError):
+              print("")
+          PY
+              )"
+              if test "$code" != "DEVELOPER_NOT_LINKED"; then
+                printf 'error: RePebble developer lookup failed with HTTP 403 (%s)\n' "$code" >&2
+                exit 1
+              fi
+              exists=false
+              ;;
+            *)
+              printf 'error: RePebble developer lookup failed with HTTP %s\n' "$http_status" >&2
+              exit 1
+              ;;
+          esac
+
+          printf 'exists=%s\n' "$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Publish draft without GIF capture
+        shell: bash
+        env:
+          LISTING_EXISTS: ${{ steps.listing.outputs.exists }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          args=(
+            --api-base "$APPSTORE_API_BASE"
+            --non-interactive
+            --no-gif-all-platforms
+            --name "Find My iPhone"
+            --version "$VERSION"
+            --description "$(cat app/store/description.txt)"
+            --source "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+            --category tools
+            --release-notes "$(cat dist/release-notes.md)"
+          )
+
+          if test "$LISTING_EXISTS" != true; then
+            shopt -s nullglob
+            screenshots=(app/store/screenshots/*.png)
+            if test "${#screenshots[@]}" -eq 0; then
+              printf '%s\n' 'error: first RePebble draft requires PNG files in app/store/screenshots' >&2
+              exit 1
+            fi
+            for screenshot in "${screenshots[@]}"; do
+              filename="${screenshot##*/}"
+              case "$filename" in
+                diorite_*.png|emery_*.png|flint_*.png|gabbro_*.png) ;;
+                *)
+                  printf 'error: screenshot name must start with a supported platform: %s\n' "$filename" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            screenshot_paths=()
+            for screenshot in "${screenshots[@]}"; do
+              screenshot_paths+=("$GITHUB_WORKSPACE/$screenshot")
+            done
+            args+=(--screenshots "${screenshot_paths[@]}")
+          fi
+
+          cd app
+          pebble publish "${args[@]}"

@@ -1,0 +1,121 @@
+name: Pull request CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed projects
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect backend and app changes
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-files"
+
+          backend=false
+          app=false
+          while IFS= read -r file; do
+            case "$file" in
+              backend/*)
+                backend=true
+                ;;
+              app/*|.nvmrc)
+                app=true
+                ;;
+              Makefile|.github/workflows/*)
+                backend=true
+                app=true
+                ;;
+              LICENSE.md|NOTICE)
+                backend=true
+                app=true
+                ;;
+              .dockerignore)
+                backend=true
+                ;;
+            esac
+          done < "$RUNNER_TEMP/changed-files"
+
+          printf 'backend=%s\n' "$backend" >> "$GITHUB_OUTPUT"
+          printf 'app=%s\n' "$app" >> "$GITHUB_OUTPUT"
+          {
+            printf '### Changed files\n\n```text\n'
+            cat "$RUNNER_TEMP/changed-files"
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  backend:
+    name: Backend tests and audit
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
+
+      - name: Run backend tests
+        run: make backend-test
+
+      - name: Run backend audit
+        run: make backend-audit
+
+  app:
+    name: App tests, ESLint and audit
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Run app tests
+        run: make app-test
+
+      - name: Run ESLint
+        run: make app-eslint
+
+      - name: Run dependency audit
+        run: make app-audit
