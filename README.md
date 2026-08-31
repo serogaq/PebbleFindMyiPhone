@@ -26,7 +26,7 @@ application on iOS.
 
 The RePebble App Store listing will be linked here after publication:
 
-**[Install Find My iPhone from the RePebble App Store](https://apps.repebble.com/PLACEHOLDER)**
+**[Install Find My iPhone from the RePebble App Store](https://apps.repebble.com/d71d5cfc5ec6470ebe8745d2)**
 
 The Pebble application requires a backend deployed and authenticated as
 described below.
