@@ -17,6 +17,12 @@ outputs:
   pebble-sdk-version:
     description: Pinned Pebble SDK version
     value: ${{ steps.versions.outputs.pebble-sdk-version }}
+  actionlint-version:
+    description: Pinned actionlint version
+    value: ${{ steps.versions.outputs.actionlint-version }}
+  zizmor-version:
+    description: Pinned zizmor version
+    value: ${{ steps.versions.outputs.zizmor-version }}
 
 runs:
   using: composite
@@ -32,11 +38,13 @@ runs:
         PEBBLE_TOOL_VERSION=
         PEBBLE_SDK_VERSION=
         PIP_AUDIT_VERSION=
+        ACTIONLINT_VERSION=
+        ZIZMOR_VERSION=
         seen_keys=' '
 
         while IFS='=' read -r key value; do
           case "$key" in
-            PYTHON_VERSION|NODE_VERSION|UV_VERSION|PEBBLE_TOOL_VERSION|PEBBLE_SDK_VERSION|PIP_AUDIT_VERSION)
+            PYTHON_VERSION|NODE_VERSION|UV_VERSION|PEBBLE_TOOL_VERSION|PEBBLE_SDK_VERSION|PIP_AUDIT_VERSION|ACTIONLINT_VERSION|ZIZMOR_VERSION)
               if [[ "$seen_keys" == *" $key "* ]]; then
                 printf 'error: duplicate key in toolchain.env: %s\n' "$key" >&2
                 exit 1
@@ -59,7 +67,9 @@ runs:
           UV_VERSION \
           PEBBLE_TOOL_VERSION \
           PEBBLE_SDK_VERSION \
-          PIP_AUDIT_VERSION; do
+          PIP_AUDIT_VERSION \
+          ACTIONLINT_VERSION \
+          ZIZMOR_VERSION; do
           value="${!name}"
           if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
             printf 'error: invalid %s in toolchain.env: %s\n' "$name" "$value" >&2
@@ -73,4 +83,6 @@ runs:
           printf 'uv-version=%s\n' "$UV_VERSION"
           printf 'pebble-tool-version=%s\n' "$PEBBLE_TOOL_VERSION"
           printf 'pebble-sdk-version=%s\n' "$PEBBLE_SDK_VERSION"
+          printf 'actionlint-version=%s\n' "$ACTIONLINT_VERSION"
+          printf 'zizmor-version=%s\n' "$ZIZMOR_VERSION"
         } >> "$GITHUB_OUTPUT"

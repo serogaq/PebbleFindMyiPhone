@@ -6,6 +6,7 @@ include toolchain.env
 PYTHON ?= $(PYTHON_VERSION)
 UV ?= uv
 UVX ?= uvx
+GO ?= go
 NPM ?= npm
 NODE ?= node
 PEBBLE ?= pebble
@@ -30,13 +31,14 @@ BACKEND_BUILD_FLAGS ?=
 PYTHON_BASE_IMAGE ?= python:$(PYTHON_VERSION)-slim-bookworm
 
 .PHONY: help backend-deps app-node-check app-deps backend-test backend-audit \
-	app-test app-eslint app-audit backend-build app-build app-qemu app-install
+	workflow-audit app-test app-eslint app-audit backend-build app-build app-qemu app-install
 
 help:
 	@printf '%s\n' \
 		'Development targets:' \
 		'  make backend-test                 Run backend unit/integration tests' \
 		'  make backend-audit                Run backend lint, security and dependency audits' \
+		'  make workflow-audit               Lint and security-audit GitHub Actions workflows' \
 		'  make app-test                     Run PebbleKit JS tests' \
 		'  make app-eslint                   Run ESLint for the Pebble app' \
 		'  make app-audit                    Audit app production and development dependencies' \
@@ -75,6 +77,21 @@ backend-audit: backend-deps
 	cd backend && APPLE_ID=ci@example.invalid API_TOKEN=00000000000000000000000000000000 TARGET_DEVICE_ID=ci-target $(DOCKER_COMPOSE) config --quiet
 	cd backend && APPLE_ID=ci@example.invalid API_TOKEN=00000000000000000000000000000000 TARGET_DEVICE_ID=ci-target $(DOCKER_COMPOSE) -f docker-compose.yaml -f docker-compose.local.yaml config --quiet
 	cd backend && APPLE_ID=ci@example.invalid API_TOKEN=00000000000000000000000000000000 TARGET_DEVICE_ID=ci-target $(DOCKER_COMPOSE) -f docker-compose.yaml -f docker-compose.secrets.yaml config --quiet
+
+workflow-audit:
+	@command -v "$(UVX)" >/dev/null 2>&1 || { printf '%s\n' 'error: uvx is required for zizmor'; exit 1; }
+	@if command -v actionlint >/dev/null 2>&1; then \
+		actionlint; \
+	elif command -v "$(GO)" >/dev/null 2>&1; then \
+		"$(GO)" run "github.com/rhysd/actionlint/cmd/actionlint@v$(ACTIONLINT_VERSION)"; \
+	elif command -v "$(DOCKER)" >/dev/null 2>&1; then \
+		"$(DOCKER)" run --rm --volume "$(CURDIR):/repo:ro" --workdir /repo \
+			"rhysd/actionlint:$(ACTIONLINT_VERSION)"; \
+	else \
+		printf '%s\n' 'error: actionlint, Go, or Docker is required for workflow audit' >&2; \
+		exit 1; \
+	fi
+	"$(UVX)" --from "zizmor==$(ZIZMOR_VERSION)" zizmor --strict-collection .github
 
 app-test: app-deps
 	cd app && "$(NPM)" test

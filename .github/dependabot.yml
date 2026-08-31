@@ -11,8 +11,18 @@ updates:
       default-days: 7
     open-pull-requests-limit: 5
     groups:
-      github-actions:
+      artifact-actions:
+        patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
+      github-actions-non-major:
         patterns:
           - "*"
+        exclude-patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: ci

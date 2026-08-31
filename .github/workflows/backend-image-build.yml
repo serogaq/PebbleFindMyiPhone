@@ -1,0 +1,92 @@
+name: Build backend image
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: Image repository/name
+        required: true
+        type: string
+      tag:
+        description: Version or smoke-test tag
+        required: true
+        type: string
+      platforms:
+        description: Comma-separated Buildx platforms
+        required: true
+        type: string
+      push:
+        description: Push versioned and latest images
+        required: false
+        default: false
+        type: boolean
+      runtime-smoke:
+        description: Run a native image and probe /healthz
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    name: Build backend image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        if: inputs.push
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build multi-architecture image without publishing
+        if: inputs.push == false
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          VERSION: ${{ inputs.tag }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          make backend-build \
+            BACKEND_IMAGE="$IMAGE_NAME" \
+            BACKEND_TAG="$VERSION" \
+            BACKEND_PLATFORMS="$PLATFORMS" \
+            BACKEND_BUILD_FLAGS="--output=type=oci,dest=$RUNNER_TEMP/backend-image.oci.tar"
+          test -s "$RUNNER_TEMP/backend-image.oci.tar"
+          tar -tf "$RUNNER_TEMP/backend-image.oci.tar" | grep -Eq '(^|/)index\.json$'
+
+      - name: Build native runtime-smoke image
+        if: inputs.runtime-smoke
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          VERSION: ${{ inputs.tag }}
+        run: |
+          make backend-build \
+            BACKEND_IMAGE="$IMAGE_NAME" \
+            BACKEND_TAG="$VERSION-native-smoke" \
+            BACKEND_PLATFORMS=linux/amd64 \
+            BACKEND_BUILD_FLAGS=--load
+          sh .github/scripts/backend_image_smoke.sh "$IMAGE_NAME:$VERSION-native-smoke"
+
+      - name: Build and push versioned and latest images
+        if: inputs.push
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          VERSION: ${{ inputs.tag }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          make backend-build \
+            BACKEND_IMAGE="$IMAGE_NAME" \
+            BACKEND_TAG="$VERSION" \
+            BACKEND_PLATFORMS="$PLATFORMS" \
+            BACKEND_BUILD_FLAGS="--push --tag $IMAGE_NAME:latest"

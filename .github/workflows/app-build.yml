@@ -1,0 +1,95 @@
+name: Build Pebble app artifact
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: App version to embed and validate
+        required: true
+        type: string
+      artifact-name:
+        description: Artifact name shared with downstream jobs
+        required: true
+        type: string
+    outputs:
+      artifact-name:
+        description: Name of the uploaded app release artifact
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and validate PBW
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read toolchain versions
+        id: toolchain
+        uses: ./.github/actions/toolchain-versions # zizmor: ignore[self-repository]
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ steps.toolchain.outputs.node-version }}
+          package-manager-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ steps.toolchain.outputs.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ steps.toolchain.outputs.uv-version }}
+          enable-cache: false
+
+      - name: Install Pebble toolchain
+        env:
+          PEBBLE_TOOL_VERSION: ${{ steps.toolchain.outputs.pebble-tool-version }}
+          PEBBLE_SDK_VERSION: ${{ steps.toolchain.outputs.pebble-sdk-version }}
+          PYTHON_VERSION: ${{ steps.toolchain.outputs.python-version }}
+        run: |
+          uv tool install --python "$PYTHON_VERSION" "pebble-tool==$PEBBLE_TOOL_VERSION"
+          pebble sdk install "$PEBBLE_SDK_VERSION"
+          pebble --version
+          pebble sdk list
+
+      - name: Build and validate PBW
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          make app-build
+          python3 .github/scripts/app_release.py validate-pbw \
+            --version "$VERSION" app/build/app.pbw
+
+      - name: Prepare release bundle
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 .github/scripts/app_release.py prepare-dist \
+            --version "$VERSION" app/build/app.pbw
+          python3 .github/scripts/app_release.py validate-dist \
+            --version "$VERSION" dist
+
+      - name: Set artifact output
+        id: artifact
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        run: printf 'name=%s\n' "$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

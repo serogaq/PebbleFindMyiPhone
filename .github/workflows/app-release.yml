@@ -24,7 +24,7 @@ jobs:
       version: ${{ steps.version.outputs.value }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -54,23 +54,7 @@ jobs:
             exit 1
           fi
 
-          VERSION="$VERSION" python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          version = os.environ["VERSION"]
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          pattern = re.compile(
-              rf"^## {re.escape(version)}(?:\s+-[^\n]*)?\n(.*?)(?=^## |\Z)",
-              re.MULTILINE | re.DOTALL,
-          )
-          matches = pattern.findall(changelog)
-          if len(matches) != 1 or not matches[0].strip():
-              raise SystemExit(
-                  f"error: CHANGELOG.md must contain one non-empty section for {version}"
-              )
-          PY
+          python3 .github/scripts/app_release.py validate-changelog --version "$VERSION"
 
           printf 'value=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -80,13 +64,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Read toolchain versions
         id: toolchain
-        uses: $/.github/actions/toolchain-versions
+        uses: ./.github/actions/toolchain-versions # zizmor: ignore[self-repository]
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -98,123 +82,34 @@ jobs:
         run: make app-test app-eslint app-audit
 
   build:
-    name: Build release PBW
     needs: [validate-tag, app-checks]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - name: Read toolchain versions
-        id: toolchain
-        uses: $/.github/actions/toolchain-versions
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: ${{ steps.toolchain.outputs.node-version }}
-          package-manager-cache: false
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: ${{ steps.toolchain.outputs.python-version }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: ${{ steps.toolchain.outputs.uv-version }}
-          enable-cache: false
-
-      - name: Install Pebble toolchain
-        env:
-          PEBBLE_TOOL_VERSION: ${{ steps.toolchain.outputs.pebble-tool-version }}
-          PEBBLE_SDK_VERSION: ${{ steps.toolchain.outputs.pebble-sdk-version }}
-          PYTHON_VERSION: ${{ steps.toolchain.outputs.python-version }}
-        run: |
-          uv tool install --python "$PYTHON_VERSION" "pebble-tool==$PEBBLE_TOOL_VERSION"
-          pebble sdk install "$PEBBLE_SDK_VERSION"
-          pebble --version
-          pebble sdk list
-
-      - name: Build and validate PBW
-        env:
-          VERSION: ${{ needs.validate-tag.outputs.version }}
-        run: |
-          make app-build
-          python3 - "$VERSION" <<'PY'
-          import json
-          import sys
-          import zipfile
-          from pathlib import Path
-
-          version = sys.argv[1]
-          pbw = Path("app/build/app.pbw")
-          if not pbw.is_file():
-              raise SystemExit(f"error: PBW was not created: {pbw}")
-
-          with zipfile.ZipFile(pbw) as archive:
-              appinfo = json.loads(archive.read("appinfo.json"))
-              companion = archive.read("pebble-js-app.js").decode("utf-8")
-
-          expected_platforms = {"diorite", "emery", "flint", "gabbro"}
-          if appinfo.get("versionLabel") != version:
-              raise SystemExit("error: PBW version does not match the release tag")
-          if str(appinfo.get("uuid", "")).lower() != "91d0ef11-0f9b-424a-9876-d96b6067e388":
-              raise SystemExit("error: PBW contains an unexpected application UUID")
-          if set(appinfo.get("targetPlatforms", [])) != expected_platforms:
-              raise SystemExit("error: PBW target platform set is incomplete or unexpected")
-          if "Required Notice: Copyright © serogaq (https://github.com/serogaq/PebbleFindMyiPhone)" not in companion:
-              raise SystemExit("error: PBW does not contain the required notice")
-          PY
-
-      - name: Prepare release files
-        env:
-          VERSION: ${{ needs.validate-tag.outputs.version }}
-        run: |
-          mkdir -p dist
-          cp app/build/app.pbw "dist/pebble-find-my-iphone-$VERSION.pbw"
-          cp LICENSE.md NOTICE dist/
-          VERSION="$VERSION" python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          version = os.environ["VERSION"]
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          pattern = re.compile(
-              rf"^## {re.escape(version)}(?:\s+-[^\n]*)?\n(.*?)(?=^## |\Z)",
-              re.MULTILINE | re.DOTALL,
-          )
-          notes = pattern.findall(changelog)[0].strip()
-          Path("dist/release-notes.md").write_text(
-              notes + "\n",
-              encoding="utf-8",
-          )
-          PY
-
-      - name: Upload release bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: app-release-${{ needs.validate-tag.outputs.version }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 14
+    uses: ./.github/workflows/app-build.yml # zizmor: ignore[self-repository]
+    with:
+      version: ${{ needs.validate-tag.outputs.version }}
+      artifact-name: app-release-${{ needs.validate-tag.outputs.version }}
 
   github-release:
     name: Publish GitHub Release
     needs: [validate-tag, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Required to create or update the GitHub Release.
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: app-release-${{ needs.validate-tag.outputs.version }}
           path: dist
+
+      - name: Validate downloaded release bundle
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: python3 .github/scripts/app_release.py validate-dist --version "$VERSION" dist
 
       - name: Create or update GitHub Release
         env:
@@ -258,19 +153,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Read toolchain versions
         id: toolchain
-        uses: $/.github/actions/toolchain-versions
+        uses: ./.github/actions/toolchain-versions # zizmor: ignore[self-repository]
 
       - name: Download release notes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: app-release-${{ needs.validate-tag.outputs.version }}
           path: dist
+
+      - name: Validate downloaded release bundle
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: python3 .github/scripts/app_release.py validate-dist --version "$VERSION" dist
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -279,12 +179,12 @@ jobs:
           package-manager-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ steps.toolchain.outputs.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: ${{ steps.toolchain.outputs.uv-version }}
           enable-cache: false
