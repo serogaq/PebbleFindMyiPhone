@@ -1,6 +1,6 @@
 # Changelog
 
-## main
+## 1.0.1 - 2026-08-31 / backend
 
 - Fixed `auth login` to force a fresh Apple authentication instead of reusing
   a session whose Find My authorization has expired.
