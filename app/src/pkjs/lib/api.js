@@ -39,6 +39,8 @@ function resultForResponse(status, body) {
     httpStatus: status,
     retryable: error.retryable === true,
     commandDispatched: error.command_dispatched === true || error.command_may_have_been_dispatched === true,
+    preDispatch: error.command_dispatched === false &&
+      error.command_may_have_been_dispatched !== true,
     backendCode: code
   };
 }
@@ -138,7 +140,7 @@ function playSound(settings, callback) {
       }
       var result = resultForResponse(response.status, response.body);
       if (result.backendCode === 'icloud.device_lookup_failed' && result.retryable &&
-          !result.commandDispatched && attempts === 1) {
+          result.preDispatch && attempts === 1) {
         setTimeout(attempt, 750);
       } else {
         callback(result);

@@ -24,5 +24,5 @@
   "required_notice": "Required Notice: Copyright © serogaq (https://github.com/serogaq/PebbleFindMyiPhone)",
   "license": "Licensed under PolyForm Noncommercial 1.0.0. https://polyformproject.org/licenses/noncommercial/1.0.0",
   "version_label": "Version",
-  "built_at_label": "Built at"
+  "commit_label": "Commit"
 }

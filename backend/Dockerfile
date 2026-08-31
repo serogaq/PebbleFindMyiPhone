@@ -1,6 +1,6 @@
 # Fallback for direct Docker builds; make backend-build overrides this value
 # from the repository's toolchain.env.
-ARG PYTHON_BASE_IMAGE=python:3.12.14-slim-bookworm
+ARG PYTHON_BASE_IMAGE=python:3.12.14-slim-bookworm@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579
 FROM ${PYTHON_BASE_IMAGE}
 
 ARG IMAGE_VERSION=development

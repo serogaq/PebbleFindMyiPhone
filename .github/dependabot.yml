@@ -26,3 +26,58 @@ updates:
           - "patch"
     commit-message:
       prefix: ci
+
+  - package-ecosystem: pip
+    directory: "/backend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:15"
+      timezone: Etc/GMT
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    groups:
+      python-non-major:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - pyicloud
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: npm
+    directory: "/app"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:30"
+      timezone: Etc/GMT
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    groups:
+      npm-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: docker
+    directory: "/backend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:45"
+      timezone: Etc/GMT
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps

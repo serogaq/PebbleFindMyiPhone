@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -18,6 +19,26 @@ from requests import RequestException
 from requests.adapters import HTTPAdapter
 
 from .config import Settings
+
+LOGGER = logging.getLogger(__name__)
+
+APPLE_REQUEST_EXCEPTIONS = (
+    PyiCloudAPIResponseException,
+    PyiCloudAuthRequiredException,
+    PyiCloudFailedLoginException,
+    PyiCloudServiceUnavailable,
+    RequestException,
+)
+
+
+def _log_provider_exception(event: str) -> None:
+    """Keep upstream details out of normal logs while allowing DEBUG diagnosis."""
+
+    LOGGER.debug(
+        "Raw Apple provider exception",
+        extra={"event": event},
+        exc_info=True,  # noqa: LOG014 - every caller invokes this inside except.
+    )
 
 
 class ICloudProbeError(RuntimeError):
@@ -101,10 +122,15 @@ def authenticate(settings: Settings, password: str) -> PyiCloudService:
         # place even though login appears successful.
         service.authenticate(force_refresh=True)
     except (PyiCloudFailedLoginException, PyiCloudAuthRequiredException) as exc:
+        _log_provider_exception("icloud.authentication_failed")
         raise AuthenticationRequired(
             "Apple rejected the credentials or the account requires additional setup"
         ) from exc
     except (PyiCloudAPIResponseException, RequestException) as exc:
+        _log_provider_exception("icloud.authentication_failed")
+        raise AppleRequestFailed("Apple authentication request failed") from exc
+    except Exception as exc:  # pyicloud is an unofficial API with unstable errors.
+        _log_provider_exception("icloud.authentication_failed")
         raise AppleRequestFailed("Apple authentication request failed") from exc
     return service
 
@@ -127,11 +153,8 @@ def load_authenticated_session(settings: Settings) -> PyiCloudService:
     for _attempt in range(2):
         try:
             status = service.get_auth_status()
-        except (
-            PyiCloudAPIResponseException,
-            PyiCloudAuthRequiredException,
-            RequestException,
-        ):
+        except Exception:  # noqa: BLE001 - pyicloud errors are unstable.
+            _log_provider_exception("icloud.auth_status_failed")
             continue
         if status.get("authenticated"):
             return service
@@ -143,6 +166,18 @@ def load_authenticated_session(settings: Settings) -> PyiCloudService:
 
 
 def complete_interactive_mfa(service: PyiCloudService, prompt_code) -> None:
+    """Complete MFA while keeping every unexpected provider detail out of stderr."""
+
+    try:
+        _complete_interactive_mfa(service, prompt_code)
+    except ICloudProbeError:
+        raise
+    except Exception as exc:  # pyicloud MFA exceptions are not a stable contract.
+        _log_provider_exception("icloud.mfa_failed")
+        raise AuthenticationRequired("Apple MFA operation failed") from exc
+
+
+def _complete_interactive_mfa(service: PyiCloudService, prompt_code) -> None:
     """Complete code-based 2FA/2SA and make the browser session trusted."""
 
     if service.requires_2fa:
@@ -152,7 +187,8 @@ def complete_interactive_mfa(service: PyiCloudService, prompt_code) -> None:
             )
         try:
             requested = service.request_2fa_code()
-        except PyiCloudAPIResponseException as exc:
+        except APPLE_REQUEST_EXCEPTIONS as exc:
+            _log_provider_exception("icloud.mfa_request_failed")
             raise AuthenticationRequired("Apple failed to deliver a 2FA code") from exc
         if not requested:
             raise AuthenticationRequired(
@@ -160,7 +196,14 @@ def complete_interactive_mfa(service: PyiCloudService, prompt_code) -> None:
             )
         for _attempt in range(3):
             code = prompt_code("Enter Apple 2FA code: ").strip()
-            if service.validate_2fa_code(code):
+            try:
+                valid = service.validate_2fa_code(code)
+            except APPLE_REQUEST_EXCEPTIONS as exc:
+                _log_provider_exception("icloud.mfa_validation_failed")
+                raise AuthenticationRequired(
+                    "Apple failed to validate the 2FA code"
+                ) from exc
+            if valid:
                 break
         else:
             raise AuthenticationRequired("Apple rejected the 2FA code three times")
@@ -170,14 +213,44 @@ def complete_interactive_mfa(service: PyiCloudService, prompt_code) -> None:
         if not trusted_devices:
             raise AuthenticationRequired("No trusted devices are available for 2SA")
         device = trusted_devices[0]
-        if not service.send_verification_code(device):
+        try:
+            sent = service.send_verification_code(device)
+        except APPLE_REQUEST_EXCEPTIONS as exc:
+            _log_provider_exception("icloud.mfa_request_failed")
+            raise AuthenticationRequired("Apple failed to deliver a 2SA code") from exc
+        if not sent:
             raise AuthenticationRequired("Apple failed to deliver a 2SA code")
         code = prompt_code("Enter Apple 2SA code: ").strip()
-        if not service.validate_verification_code(device, code):
+        try:
+            valid = service.validate_verification_code(device, code)
+        except APPLE_REQUEST_EXCEPTIONS as exc:
+            _log_provider_exception("icloud.mfa_validation_failed")
+            raise AuthenticationRequired(
+                "Apple failed to validate the 2SA code"
+            ) from exc
+        if not valid:
             raise AuthenticationRequired("Apple rejected the 2SA code")
 
-    if not service.is_trusted_session and not service.trust_session():
-        raise AuthenticationRequired("Apple did not mark the session as trusted")
+    if not service.is_trusted_session:
+        try:
+            trusted = service.trust_session()
+        except APPLE_REQUEST_EXCEPTIONS as exc:
+            _log_provider_exception("icloud.mfa_trust_failed")
+            raise AuthenticationRequired("Apple failed to trust the session") from exc
+        if not trusted:
+            raise AuthenticationRequired("Apple did not mark the session as trusted")
+
+
+def read_auth_status(service: PyiCloudService) -> dict:
+    """Read Apple authentication state without leaking provider exceptions."""
+
+    try:
+        return service.get_auth_status()
+    except Exception as exc:  # pyicloud may surface undocumented provider errors.
+        _log_provider_exception("icloud.auth_status_failed")
+        raise AuthenticationRequired(
+            "Apple authentication status request failed"
+        ) from exc
 
 
 def list_devices(service: PyiCloudService) -> list[DeviceSummary]:

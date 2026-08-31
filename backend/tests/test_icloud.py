@@ -1,5 +1,8 @@
 """Tests for exact device selection and real-command preparation."""
 
+import json
+import logging
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -15,10 +18,13 @@ from findmy_backend.icloud import (
     SoundUnavailable,
     TargetDeviceNotFound,
     authenticate,
+    complete_interactive_mfa,
     list_devices,
     load_authenticated_session,
     play_sound,
+    read_auth_status,
 )
+from findmy_backend.logging_config import JsonFormatter
 
 
 class FakeSession:
@@ -149,3 +155,80 @@ def test_load_session_distinguishes_missing_local_state(monkeypatch):
         AuthenticationRequired, match="No valid Apple session is stored"
     ):
         load_authenticated_session(Mock())
+
+
+def test_mfa_validation_maps_provider_error_without_leaking_details():
+    service = SimpleNamespace(
+        requires_2fa=True,
+        security_key_names=[],
+        request_2fa_code=Mock(return_value=True),
+        validate_2fa_code=Mock(
+            side_effect=PyiCloudAPIResponseException("private MFA response")
+        ),
+    )
+
+    with pytest.raises(AuthenticationRequired, match="failed to validate") as error:
+        complete_interactive_mfa(service, lambda _prompt: "123456")
+
+    assert "private MFA response" not in str(error.value)
+
+
+def test_mfa_maps_undocumented_provider_error_without_leaking_details():
+    class UnstableService:
+        @property
+        def requires_2fa(self):
+            raise ValueError("private undocumented MFA response")
+
+    with pytest.raises(AuthenticationRequired, match="MFA operation failed") as error:
+        complete_interactive_mfa(UnstableService(), lambda _prompt: "123456")
+
+    assert "private undocumented" not in str(error.value)
+
+
+def test_auth_status_maps_provider_error_without_leaking_details():
+    service = SimpleNamespace(
+        get_auth_status=Mock(
+            side_effect=PyiCloudAPIResponseException("private status response")
+        )
+    )
+
+    with pytest.raises(AuthenticationRequired, match="status request failed") as error:
+        read_auth_status(service)
+
+    assert "private status response" not in str(error.value)
+
+
+def test_json_debug_exception_contains_upstream_traceback():
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    logger = logging.getLogger("findmy-test-debug")
+    logger.handlers[:] = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        raise RuntimeError("raw provider detail")
+    except RuntimeError:
+        logger.debug("provider failed", exc_info=True)
+
+    payload = json.loads(stream.getvalue())
+    assert payload["level"] == "debug"
+    assert "RuntimeError: raw provider detail" in payload["exception"]
+
+
+def test_info_logging_suppresses_raw_provider_traceback():
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    logger = logging.getLogger("findmy-test-info")
+    logger.handlers[:] = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    try:
+        raise RuntimeError("raw provider detail")
+    except RuntimeError:
+        logger.debug("provider failed", exc_info=True)
+
+    assert stream.getvalue() == ""

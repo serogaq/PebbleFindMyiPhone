@@ -200,4 +200,5 @@ This project is licensed under the
 and distributed only for purposes permitted by that license, primarily
 noncommercial purposes. Commercial use requires separate permission from the
 author. The license text and [required copyright notice](NOTICE) control if
-this summary differs from them.
+this summary differs from them. Third-party components retain their own terms;
+see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).

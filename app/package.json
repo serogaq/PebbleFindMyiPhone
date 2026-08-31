@@ -12,7 +12,7 @@
     "lint": "eslint src/pkjs scripts tests eslint.config.js",
     "test": "node tests/run.js",
     "build": "pebble build",
-    "check": "npm run lint && npm test && pebble build"
+    "check": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@rebble/clay": "1.1.0"

@@ -16,6 +16,7 @@ from .icloud import (
     list_devices,
     load_authenticated_session,
     play_sound,
+    read_auth_status,
 )
 from .logging_config import configure_logging
 
@@ -72,7 +73,7 @@ def _auth_login(settings: Settings) -> int:
     finally:
         del password  # Drop the CLI reference as soon as authentication finishes.
 
-    status = service.get_auth_status()
+    status = read_auth_status(service)
     if not status.get("authenticated") or not status.get("trusted_session"):
         raise AuthenticationError("Apple did not return a usable trusted session")
     print("Authenticated trusted session saved successfully.")
@@ -85,7 +86,7 @@ class AuthenticationError(ICloudProbeError):
 
 def _auth_status(settings: Settings) -> int:
     service = load_authenticated_session(settings)
-    status = service.get_auth_status()
+    status = read_auth_status(service)
     print(
         json.dumps(
             {

@@ -88,8 +88,8 @@ jobs:
       version: ${{ needs.validate-tag.outputs.version }}
       artifact-name: app-release-${{ needs.validate-tag.outputs.version }}
 
-  github-release:
-    name: Publish GitHub Release
+  github-release-draft:
+    name: Stage GitHub Release draft
     needs: [validate-tag, build]
     runs-on: ubuntu-latest
     permissions:
@@ -111,7 +111,7 @@ jobs:
           VERSION: ${{ needs.validate-tag.outputs.version }}
         run: python3 .github/scripts/app_release.py validate-dist --version "$VERSION" dist
 
-      - name: Create or update GitHub Release
+      - name: Create or update GitHub Release draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
@@ -132,10 +132,17 @@ jobs:
           } > "$github_release_notes"
 
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if test "$is_draft" != true; then
+              printf 'error: refusing to modify an already-published GitHub Release\n' >&2
+              exit 1
+            fi
             gh release edit "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Find My iPhone $VERSION" \
-              --notes-file "$github_release_notes"
+              --notes-file "$github_release_notes" \
+              --draft
             gh release upload "$RELEASE_TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
@@ -144,12 +151,13 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --title "Find My iPhone $VERSION" \
               --notes-file "$github_release_notes" \
+              --draft \
               --verify-tag
           fi
 
   repebble-draft:
     name: Publish RePebble draft
-    needs: [validate-tag, build]
+    needs: [validate-tag, build, github-release-draft]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -363,3 +371,30 @@ jobs:
 
           cd app
           pebble publish "${args[@]}"
+
+  finalize-release:
+    name: Publish GitHub Release after RePebble succeeds
+    if: always()
+    needs: [validate-tag, github-release-draft, repebble-draft]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Publishes or rolls back the staged GitHub Release.
+    steps:
+      - name: Commit or roll back staged release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GITHUB_DRAFT_RESULT: ${{ needs.github-release-draft.result }}
+          REPEBBLE_RESULT: ${{ needs.repebble-draft.result }}
+        run: |
+          if test "$GITHUB_DRAFT_RESULT" = success && test "$REPEBBLE_RESULT" = success; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            exit 0
+          fi
+
+          if test "$GITHUB_DRAFT_RESULT" = success; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+          printf 'error: release transaction failed (GitHub draft: %s, RePebble: %s)\n' \
+            "$GITHUB_DRAFT_RESULT" "$REPEBBLE_RESULT" >&2
+          exit 1
