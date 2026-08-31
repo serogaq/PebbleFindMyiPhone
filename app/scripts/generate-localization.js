@@ -2,6 +2,7 @@
 
 var fs = require('fs');
 var path = require('path');
+var childProcess = require('child_process');
 
 var FILES = ['watch.json', 'settings.json'];
 var KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
@@ -98,12 +99,42 @@ function twoDigits(value) {
   return value < 10 ? '0' + value : String(value);
 }
 
-function formatBuildTime(date) {
+function formatCommitTime(date) {
   var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[date.getUTCMonth()] + ' ' + date.getUTCDate() + ', ' +
     date.getUTCFullYear() + ' ' + twoDigits(date.getUTCHours()) + ':' +
     twoDigits(date.getUTCMinutes()) + ':' + twoDigits(date.getUTCSeconds()) + ' GMT';
+}
+
+function gitValue(projectRoot, format, errorMessage) {
+  try {
+    return childProcess.execFileSync('git', ['show', '-s', '--format=' + format, 'HEAD'], {
+      cwd: projectRoot,
+      encoding: 'utf8'
+    }).trim();
+  } catch (error) {
+    throw new Error(errorMessage);
+  }
+}
+
+function resolveCommitMetadata(projectRoot) {
+  var hash = gitValue(projectRoot, '%H', 'Cannot determine commit hash');
+  var epoch = gitValue(projectRoot, '%ct', 'Cannot determine commit timestamp');
+  if (!/^[0-9a-f]{7,40}$/i.test(hash)) {
+    throw new Error('Git returned an invalid commit hash');
+  }
+  if (!/^[0-9]+$/.test(epoch)) {
+    throw new Error('Git returned an invalid commit timestamp');
+  }
+  var date = new Date(Number(epoch) * 1000);
+  if (isNaN(date.getTime())) {
+    throw new Error('Git commit timestamp is outside the supported date range');
+  }
+  return {
+    hash: hash.slice(0, 7).toLowerCase(),
+    timestamp: formatCommitTime(date)
+  };
 }
 
 function renderCHeader(keys) {
@@ -243,9 +274,10 @@ function writeIfChanged(filename, content) {
 function generate(projectRoot) {
   var catalogs = loadCatalogs(path.join(projectRoot, 'localization'));
   var packageInfo = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  var commit = resolveCommitMetadata(projectRoot);
   var buildInfo = {
     version: packageInfo.version,
-    built_at: formatBuildTime(new Date())
+    commit: commit.hash + ' (' + commit.timestamp + ')'
   };
   var watchKeys = Object.keys(catalogs.en.watch).sort();
   watchKeys.forEach(function(key) {
@@ -277,10 +309,11 @@ if (require.main === module) {
 
 module.exports = {
   FILES: FILES,
-  formatBuildTime: formatBuildTime,
+  formatCommitTime: formatCommitTime,
   generate: generate,
   loadCatalogs: loadCatalogs,
   normalizeLocale: normalizeLocale,
+  resolveCommitMetadata: resolveCommitMetadata,
   renderCHeader: renderCHeader,
   renderCSource: renderCSource,
   renderSettingsModule: renderSettingsModule

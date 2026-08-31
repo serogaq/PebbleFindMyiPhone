@@ -31,7 +31,7 @@ function buildConfig(s, buildInfo) {
     {type: 'text', id: 'requiredNotice', defaultValue: s.required_notice},
     {type: 'text', id: 'license', defaultValue: s.license},
     {type: 'text', id: 'version', defaultValue: s.version_label + ': ' + buildInfo.version},
-    {type: 'text', id: 'builtAt', defaultValue: s.built_at_label + ': ' + buildInfo.built_at}
+    {type: 'text', id: 'commit', defaultValue: s.commit_label + ': ' + buildInfo.commit}
   ];
 }
 

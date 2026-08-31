@@ -29,6 +29,8 @@ class JsonFormatter(logging.Formatter):
         duration_ms = getattr(record, "duration_ms", None)
         if duration_ms is not None:
             payload["duration_ms"] = duration_ms
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, separators=(",", ":"))
 
 

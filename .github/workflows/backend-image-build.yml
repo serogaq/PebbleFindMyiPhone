@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       push:
-        description: Push versioned and latest images
+        description: Publish a verified versioned and latest image
         required: false
         default: false
         type: boolean
@@ -25,16 +25,26 @@ on:
         required: false
         default: false
         type: boolean
+    outputs:
+      digest:
+        description: Published multi-platform manifest digest
+        value: ${{ jobs.build.outputs.digest }}
 
 jobs:
   build:
     name: Build backend image
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.candidate.outputs.digest }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Read toolchain versions
+        id: toolchain
+        uses: ./.github/actions/toolchain-versions # zizmor: ignore[self-repository]
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
@@ -65,8 +75,8 @@ jobs:
           test -s "$RUNNER_TEMP/backend-image.oci.tar"
           tar -tf "$RUNNER_TEMP/backend-image.oci.tar" | grep -Eq '(^|/)index\.json$'
 
-      - name: Build native runtime-smoke image
-        if: inputs.runtime-smoke
+      - name: Build native image for local smoke and scan
+        if: inputs.push == false && inputs.runtime-smoke
         env:
           IMAGE_NAME: ${{ inputs.image-name }}
           VERSION: ${{ inputs.tag }}
@@ -78,15 +88,84 @@ jobs:
             BACKEND_BUILD_FLAGS=--load
           sh .github/scripts/backend_image_smoke.sh "$IMAGE_NAME:$VERSION-native-smoke"
 
-      - name: Build and push versioned and latest images
+      - name: Scan local image with Trivy
+        if: inputs.push == false && inputs.runtime-smoke
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ inputs.image-name }}:${{ inputs.tag }}-native-smoke
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          scanners: vuln
+          severity: HIGH,CRITICAL
+
+      - name: Build and push digest-only candidate
+        id: candidate
+        if: inputs.push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: ${{ inputs.platforms }}
+          push: true
+          outputs: type=image,name=${{ inputs.image-name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            PYTHON_BASE_IMAGE=${{ steps.toolchain.outputs.python-base-image }}
+            IMAGE_VERSION=${{ inputs.tag }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Pull and smoke exact published AMD64 candidate
+        if: inputs.push && inputs.runtime-smoke
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+        run: |
+          docker pull --platform linux/amd64 "$IMAGE_NAME@$DIGEST"
+          sh .github/scripts/backend_image_smoke.sh "$IMAGE_NAME@$DIGEST"
+
+      - name: Scan exact published AMD64 candidate with Trivy
+        if: inputs.push
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ inputs.image-name }}@${{ steps.candidate.outputs.digest }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          scanners: vuln
+          severity: HIGH,CRITICAL
+
+      - name: Scan exact published ARM64 candidate with Trivy
+        if: inputs.push
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ inputs.image-name }}@${{ steps.candidate.outputs.digest }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          scanners: vuln
+          severity: HIGH,CRITICAL
+
+      - name: Attest published image digest
+        if: inputs.push
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ inputs.image-name }}
+          subject-digest: ${{ steps.candidate.outputs.digest }}
+          push-to-registry: true
+
+      - name: Promote verified digest to public tags
         if: inputs.push
         env:
           IMAGE_NAME: ${{ inputs.image-name }}
           VERSION: ${{ inputs.tag }}
-          PLATFORMS: ${{ inputs.platforms }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
         run: |
-          make backend-build \
-            BACKEND_IMAGE="$IMAGE_NAME" \
-            BACKEND_TAG="$VERSION" \
-            BACKEND_PLATFORMS="$PLATFORMS" \
-            BACKEND_BUILD_FLAGS="--push --tag $IMAGE_NAME:latest"
+          docker buildx imagetools create \
+            --tag "$IMAGE_NAME:$VERSION" \
+            --tag "$IMAGE_NAME:latest" \
+            "$IMAGE_NAME@$DIGEST"

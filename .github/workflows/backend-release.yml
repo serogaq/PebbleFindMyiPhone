@@ -112,6 +112,8 @@ jobs:
     permissions:
       contents: read
       packages: write # Required to publish the versioned and latest GHCR tags.
+      id-token: write # Required for keyless artifact attestation.
+      attestations: write # Required to persist the image attestation.
     uses: ./.github/workflows/backend-image-build.yml # zizmor: ignore[self-repository]
     with:
       image-name: ghcr.io/serogaq/pebble-find-my-iphone-backend
@@ -126,6 +128,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
+      attestations: read
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
@@ -134,13 +138,21 @@ jobs:
         env:
           IMAGE_NAME: ghcr.io/serogaq/pebble-find-my-iphone-backend
           VERSION: ${{ needs.validate-tag.outputs.version }}
+          EXPECTED_DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
           version_digest="$(docker buildx imagetools inspect "$IMAGE_NAME:$VERSION" --format '{{.Manifest.Digest}}')"
           latest_digest="$(docker buildx imagetools inspect "$IMAGE_NAME:latest" --format '{{.Manifest.Digest}}')"
-          if test "$version_digest" != "$latest_digest"; then
-            printf 'error: %s:%s and %s:latest have different digests\n' \
-              "$IMAGE_NAME" "$VERSION" "$IMAGE_NAME" >&2
+          if test "$version_digest" != "$EXPECTED_DIGEST" || test "$latest_digest" != "$EXPECTED_DIGEST"; then
+            printf 'error: promoted tags do not match verified digest %s\n' \
+              "$EXPECTED_DIGEST" >&2
             exit 1
           fi
           docker buildx imagetools inspect "$IMAGE_NAME:$VERSION"
           docker buildx imagetools inspect "$IMAGE_NAME:latest"
+
+      - name: Verify published image attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_NAME: ghcr.io/serogaq/pebble-find-my-iphone-backend
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: gh attestation verify "oci://$IMAGE_NAME:$VERSION" --repo "$GITHUB_REPOSITORY"

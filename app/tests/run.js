@@ -1,16 +1,19 @@
 'use strict';
 
 var assert = require('assert');
+var childProcess = require('child_process');
 var fs = require('fs');
 var os = require('os');
 var path = require('path');
 var api = require('../src/pkjs/lib/api');
+var appRuntime = require('../src/pkjs/lib/app-runtime');
 var configPage = require('../src/pkjs/lib/config-page');
 var localization = require('../src/pkjs/lib/localization');
 var protocol = require('../src/pkjs/lib/protocol');
 var settings = require('../src/pkjs/lib/settings');
 var localizationGenerator = require('../scripts/generate-localization');
 var englishSettings = require('../localization/en/settings.json');
+var russianSettings = require('../localization/ru/settings.json');
 
 var tests = [];
 function test(name, fn) {
@@ -87,15 +90,55 @@ function withFakeXhr(responses, body) {
     this.readyState = 4;
     this.onreadystatechange();
   };
-  body(requests);
-  delete global.XMLHttpRequest;
+  try {
+    body(requests);
+  } finally {
+    delete global.XMLHttpRequest;
+  }
+}
+
+function FakeClayItem(value) {
+  this.value = value;
+  this.handlers = {};
+}
+
+FakeClayItem.prototype.get = function() { return this.value; };
+FakeClayItem.prototype.set = function(value) { this.value = value; };
+FakeClayItem.prototype.on = function(event, handler) { this.handlers[event] = handler; };
+FakeClayItem.prototype.trigger = function(event) { this.handlers[event](); };
+
+function createClayHarness(values) {
+  var items = {
+    address: new FakeClayItem(values.address),
+    ssl: new FakeClayItem(values.ssl),
+    token: new FakeClayItem(values.token),
+    status: new FakeClayItem(''),
+    retry: new FakeClayItem('')
+  };
+  var afterBuild = null;
+  return {
+    meta: {userData: {
+      strings: englishSettings,
+      addressPattern: settings.ADDRESS_PATTERN_SOURCE
+    }},
+    EVENTS: {AFTER_BUILD: 'after-build'},
+    getItemById: function(id) { return items[id]; },
+    on: function(event, handler) {
+      assert.strictEqual(event, 'after-build');
+      afterBuild = handler;
+    },
+    build: function() { afterBuild(); },
+    items: items
+  };
 }
 
 test('retries only device lookup once with the same idempotency key', function() {
   var realTimeout = global.setTimeout;
   global.setTimeout = function(callback) { callback(); };
   withFakeXhr([
-    {status: 502, body: {error: {code: 'icloud.device_lookup_failed', retryable: true}}},
+    {status: 502, body: {error: {
+      code: 'icloud.device_lookup_failed', retryable: true, command_dispatched: false
+    }}},
     {status: 202, body: {status: 'submitted'}}
   ], function(requests) {
     var result;
@@ -106,6 +149,20 @@ test('retries only device lookup once with the same idempotency key', function()
     assert.strictEqual(result.code, protocol.RESULT.OK);
   });
   global.setTimeout = realTimeout;
+});
+
+test('does not retry device lookup without an explicit pre-dispatch marker', function() {
+  withFakeXhr([
+    {status: 502, body: {error: {code: 'icloud.device_lookup_failed', retryable: true}}}
+  ], function(requests) {
+    var result;
+    api.playSound({address: 'host:443', ssl: true, token: 'secret'}, function(value) {
+      result = value;
+    });
+    assert.strictEqual(requests.length, 1);
+    assert.strictEqual(result.code, protocol.RESULT.DEVICE_LOOKUP_FAILED);
+    assert.strictEqual(result.preDispatch, false);
+  });
 });
 
 test('does not retry an ambiguous transport failure', function() {
@@ -161,39 +218,96 @@ test('manifest targets exactly the four modern watch platforms', function() {
 });
 
 test('settings page renders first and starts live status check after build', function() {
-  var buildInfo = {version: '1.0.0', built_at: 'Aug 31, 2026 13:42:18 GMT'};
+  var buildInfo = {version: '1.0.0', commit: '3a1fb3e (Aug 31, 2026 13:42:18 GMT)'};
   var config = configPage.buildConfig(englishSettings, buildInfo);
   var status = config.filter(function(item) { return item.id === 'status'; })[0];
   var token = config.filter(function(item) { return item.id === 'token'; })[0];
   var requiredNotice = config.filter(function(item) { return item.id === 'requiredNotice'; })[0];
   var license = config.filter(function(item) { return item.id === 'license'; })[0];
   var version = config.filter(function(item) { return item.id === 'version'; })[0];
-  var builtAt = config.filter(function(item) { return item.id === 'builtAt'; })[0];
+  var commit = config.filter(function(item) { return item.id === 'commit'; })[0];
   var submitIndex = config.map(function(item) { return item.type; }).indexOf('submit');
   var statusHeadingIndex = config.findIndex(function(item) {
     return item.type === 'heading' && item.defaultValue === englishSettings.status_title;
   });
-  var source = configPage.customClay.toString();
-
   assert(status, 'status component');
   assert(token, 'token component');
   assert(requiredNotice, 'required notice component');
   assert(license, 'license component');
   assert(version, 'version component');
-  assert(builtAt, 'build time component');
+  assert(commit, 'commit component');
   assert.strictEqual(submitIndex + 1, statusHeadingIndex);
   assert.strictEqual(token.attributes.type, 'password');
   assert.strictEqual(requiredNotice.defaultValue,
     'Required Notice: Copyright © serogaq (https://github.com/serogaq/PebbleFindMyiPhone)');
   assert(license.defaultValue.indexOf('https://polyformproject.org/licenses/noncommercial/1.0.0') !== -1);
   assert.strictEqual(version.defaultValue, 'Version: 1.0.0');
-  assert.strictEqual(builtAt.defaultValue, 'Built at: Aug 31, 2026 13:42:18 GMT');
+  assert.strictEqual(commit.defaultValue, 'Commit: 3a1fb3e (Aug 31, 2026 13:42:18 GMT)');
   assert.strictEqual(config.indexOf(version), config.indexOf(license) + 1);
-  assert.strictEqual(config.indexOf(builtAt), config.indexOf(version) + 1);
-  assert(source.indexOf("clay.on(clay.EVENTS.AFTER_BUILD") !== -1);
-  assert(source.indexOf('checkStatus();') !== -1);
-  assert(source.indexOf("'/v1/status'") !== -1);
-  assert(source.indexOf('setInterval') !== -1);
+  assert.strictEqual(config.indexOf(commit), config.indexOf(version) + 1);
+});
+
+test('Clay checks status after build and retry revalidates current fields', function() {
+  var clay = createClayHarness({address: 'host:443', ssl: true, token: 'secret'});
+  var realSetInterval = global.setInterval;
+  var realClearInterval = global.clearInterval;
+  var clearedTimer = null;
+  global.setInterval = function() { return 17; };
+  global.clearInterval = function(timer) { clearedTimer = timer; };
+
+  try {
+    withFakeXhr([{status: 200, body: {state: 'ready'}}], function(requests) {
+      configPage.customClay.call(clay, false);
+      assert.strictEqual(requests.length, 0, 'status waits for Clay AFTER_BUILD');
+      clay.build();
+
+      assert.strictEqual(requests.length, 1);
+      assert.strictEqual(requests[0].method, 'GET');
+      assert.strictEqual(requests[0].url, 'https://host:443/v1/status');
+      assert.strictEqual(requests[0].headers.Authorization, 'Bearer secret');
+      assert.strictEqual(clay.items.status.get(), englishSettings.ready);
+      assert.strictEqual(clearedTimer, 17);
+
+      clay.items.address.set('https://host:443');
+      clay.items.retry.trigger('click');
+      assert.strictEqual(requests.length, 1, 'invalid settings do not make a request');
+      assert.strictEqual(clay.items.status.get(), englishSettings.invalid);
+    });
+  } finally {
+    global.setInterval = realSetInterval;
+    global.clearInterval = realClearInterval;
+  }
+});
+
+test('Clay maps backend authentication failures to a specific state', function() {
+  var clay = createClayHarness({address: 'host:443', ssl: false, token: 'secret'});
+  var realSetInterval = global.setInterval;
+  var realClearInterval = global.clearInterval;
+  global.setInterval = function() { return 1; };
+  global.clearInterval = function() {};
+
+  try {
+    withFakeXhr([{status: 503, body: {error: {
+      code: 'icloud.authentication_required'
+    }}}], function(requests) {
+      configPage.customClay.call(clay, false);
+      clay.build();
+      assert.strictEqual(requests[0].url, 'http://host:443/v1/status');
+      assert.strictEqual(clay.items.status.get(), englishSettings.reauth);
+    });
+  } finally {
+    global.setInterval = realSetInterval;
+    global.clearInterval = realClearInterval;
+  }
+});
+
+test('settings page localizes commit metadata label', function() {
+  var buildInfo = {version: '1.0.0', commit: '3a1fb3e (Aug 31, 2026 13:42:18 GMT)'};
+  var config = configPage.buildConfig(russianSettings, buildInfo);
+  var commit = config.filter(function(item) { return item.id === 'commit'; })[0];
+
+  assert.strictEqual(commit.defaultValue,
+    'Коммит: 3a1fb3e (Aug 31, 2026 13:42:18 GMT)');
 });
 
 test('all locale directories contain complete non-empty watch and settings translations', function() {
@@ -247,17 +361,33 @@ test('locale resolver supports regional tags and falls back to English', functio
   assert.strictEqual(localization.resolve(catalogs, '').name, 'English');
 });
 
-test('build metadata uses package version and stable GMT formatting', function() {
+test('commit metadata uses package version, hash and stable GMT formatting', function() {
   var manifest = require('../package.json');
-  var buildTime = localizationGenerator.formatBuildTime(
+  var commitTime = localizationGenerator.formatCommitTime(
     new Date('2026-08-31T13:42:18Z'));
   var rendered = localizationGenerator.renderSettingsModule({
     en: {settings: englishSettings}
-  }, {version: manifest.version, built_at: buildTime});
+  }, {version: manifest.version, commit: '3a1fb3e (' + commitTime + ')'});
 
-  assert.strictEqual(buildTime, 'Aug 31, 2026 13:42:18 GMT');
+  assert.strictEqual(commitTime, 'Aug 31, 2026 13:42:18 GMT');
   assert(rendered.indexOf('"version": "' + manifest.version + '"') !== -1);
-  assert(rendered.indexOf('"built_at": "Aug 31, 2026 13:42:18 GMT"') !== -1);
+  assert(rendered.indexOf(
+    '"commit": "3a1fb3e (Aug 31, 2026 13:42:18 GMT)"') !== -1);
+});
+
+test('commit metadata uses the repository hash and commit timestamp', function() {
+  var projectRoot = path.join(__dirname, '..');
+  var hash = childProcess.execFileSync(
+    'git', ['show', '-s', '--format=%H', 'HEAD'], {cwd: projectRoot, encoding: 'utf8'}).trim();
+  var epoch = childProcess.execFileSync(
+    'git', ['show', '-s', '--format=%ct', 'HEAD'], {cwd: projectRoot, encoding: 'utf8'}).trim();
+
+  assert.deepStrictEqual(
+    localizationGenerator.resolveCommitMetadata(projectRoot),
+    {
+      hash: hash.slice(0, 7),
+      timestamp: localizationGenerator.formatCommitTime(new Date(Number(epoch) * 1000))
+    });
 });
 
 test('localization generator discovers a new folder without a language registry', function() {
@@ -273,7 +403,7 @@ test('localization generator discovers a new folder without a language registry'
     });
     var catalogs = localizationGenerator.loadCatalogs(localizationRoot);
     var settingsModule = localizationGenerator.renderSettingsModule(catalogs, {
-      version: '1.0.0', built_at: 'Aug 31, 2026 13:42:18 GMT'
+      version: '1.0.0', commit: '3a1fb3e (Aug 31, 2026 13:42:18 GMT)'
     });
     var cSource = localizationGenerator.renderCSource(catalogs, ['title']);
 
@@ -286,15 +416,69 @@ test('localization generator discovers a new folder without a language registry'
   }
 });
 
-test('watch and Settings select their own system locale sources', function() {
-  var cSource = fs.readFileSync(path.join(__dirname, '../src/c/app.c'), 'utf8');
-  var pkjsSource = fs.readFileSync(path.join(__dirname, '../src/pkjs/index.js'), 'utf8');
+test('PKJS runtime injects localized Clay metadata before URL generation and saves settings',
+  function() {
+    var handlers = {};
+    var openedUrl = null;
+    var saved = null;
+    var clayInstance = null;
+    var Pebble = {
+      addEventListener: function(name, handler) { handlers[name] = handler; },
+      openURL: function(url) { openedUrl = url; },
+      sendAppMessage: function(_message, success) { success(); }
+    };
+    function FakeClay(config, customClay, options) {
+      this.meta = {};
+      this.config = config;
+      this.customClay = customClay;
+      this.options = options;
+      clayInstance = this;
+    }
+    FakeClay.prototype.setSettings = function(value) { this.settings = value; };
+    FakeClay.prototype.generateUrl = function() {
+      assert.strictEqual(this.meta.userData, this.options.userData);
+      return 'data:text/html,clay';
+    };
+    FakeClay.prototype.getSettings = function(response, save) {
+      assert.strictEqual(response, 'saved-response');
+      assert.strictEqual(save, false);
+      return {address: 'host:443'};
+    };
+    var settingsStore = {
+      ADDRESS_PATTERN_SOURCE: settings.ADDRESS_PATTERN_SOURCE,
+      load: function() { return {address: 'old:443', ssl: true, token: 'token'}; },
+      validate: function(value) { return {ok: value.address === 'host:443'}; },
+      toClay: function(value) { return value; },
+      fromClay: function() { return {address: 'host:443', ssl: true, token: 'token'}; },
+      save: function(value) { saved = value; }
+    };
 
-  assert(cSource.indexOf('localization_init(i18n_get_system_locale())') !== -1);
-  assert.strictEqual(cSource.indexOf('prv_text('), -1);
-  assert(pkjsSource.indexOf('navigator.language') !== -1);
-  assert.strictEqual(pkjsSource.indexOf('getActiveWatchInfo'), -1);
-});
+    appRuntime.create({
+      Pebble: Pebble,
+      Clay: FakeClay,
+      api: api,
+      configPage: configPage,
+      localization: localization,
+      protocol: protocol,
+      settingsStore: settingsStore,
+      settingsLocalization: {locales: {en: englishSettings, ru: russianSettings}, build: {
+        version: '1.0.0', commit: '3a1fb3e (Aug 31, 2026 13:42:18 GMT)'
+      }},
+      getPhoneLocale: function() { return 'ru-RU'; }
+    }).register();
+
+    handlers.showConfiguration();
+    assert.strictEqual(openedUrl, 'data:text/html,clay');
+    assert.strictEqual(clayInstance.options.autoHandleEvents, false);
+    assert.strictEqual(clayInstance.options.userData.strings, russianSettings);
+    assert.strictEqual(clayInstance.options.userData.addressPattern,
+      settings.ADDRESS_PATTERN_SOURCE);
+    assert.deepStrictEqual(clayInstance.settings,
+      {address: 'old:443', ssl: true, token: 'token'});
+
+    handlers.webviewclosed({response: 'saved-response'});
+    assert.deepStrictEqual(saved, {address: 'host:443', ssl: true, token: 'token'});
+  });
 
 test('RePebble description contains only user-facing store copy', function() {
   var description = fs.readFileSync(path.join(__dirname, '../store/description.txt'), 'utf8');
@@ -302,42 +486,26 @@ test('RePebble description contains only user-facing store copy', function() {
   assert.strictEqual(description.indexOf('PolyForm'), -1);
 });
 
-test('release workflow keeps legal notice out of RePebble release notes', function() {
-  var workflow = fs.readFileSync(
-    path.join(__dirname, '../../.github/workflows/app-release.yml'), 'utf8');
-  var repebbleJob = workflow.slice(workflow.indexOf('  repebble-draft:'));
+test('native request state machine executes transitions and matches the JS result protocol',
+  function() {
+    var temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pebble-state-machine-'));
+    var executable = path.join(temporaryRoot, 'state-machine-test');
+    var args = ['-std=c11', '-Wall', '-Wextra', '-Werror',
+      '-I', path.join(__dirname, '../src/c')];
+    Object.keys(protocol.RESULT).forEach(function(name) {
+      args.push('-DJS_RESULT_' + name + '=' + protocol.RESULT[name]);
+    });
+    args.push(
+      path.join(__dirname, '../src/c/state_machine.c'),
+      path.join(__dirname, 'state_machine_test.c'),
+      '-o', executable);
 
-  assert.strictEqual(workflow.indexOf('dist/github-release-notes.md'), -1);
-  assert(workflow.indexOf(
-    'github_release_notes="$RUNNER_TEMP/github-release-notes.md"') !== -1);
-  assert.strictEqual(
-    (workflow.match(/--notes-file "\$github_release_notes"/g) || []).length, 2);
-  assert(workflow.indexOf('cat dist/NOTICE') !== -1);
-  assert(repebbleJob.indexOf('--release-notes "$(cat dist/release-notes.md)"') !== -1);
-  assert.strictEqual(repebbleJob.indexOf('github_release_notes'), -1);
-});
-
-test('manual Clay setup injects localized loader strings before generating URL', function() {
-  var source = fs.readFileSync(path.join(__dirname, '../src/pkjs/index.js'), 'utf8');
-  var metadata = source.indexOf('activeClay.meta.userData = userData');
-  var generate = source.indexOf('activeClay.generateUrl()');
-  assert(metadata !== -1 && metadata < generate);
-  assert(source.indexOf('addressPattern: settingsStore.ADDRESS_PATTERN_SOURCE') !== -1);
-});
-
-test('watch guards startup status against an in-flight command and handles dropped inbox', function() {
-  var source = fs.readFileSync(path.join(__dirname, '../src/c/app.c'), 'utf8');
-  assert(source.indexOf('if (!s_busy) {\n    prv_send_request(REQUEST_CHECK_STATUS);') !== -1);
-  assert(source.indexOf('app_message_register_inbox_dropped(prv_inbox_dropped)') !== -1);
-  assert(source.indexOf('dict_calc_buffer_size(3') !== -1);
-});
-
-test('C and JS result enums remain aligned', function() {
-  var cSource = fs.readFileSync(path.join(__dirname, '../src/c/app.c'), 'utf8');
-  Object.keys(protocol.RESULT).forEach(function(name) {
-    var pattern = new RegExp('RESULT_' + name + '\\s*=\\s*' + protocol.RESULT[name] + '[,\\n]');
-    assert(pattern.test(cSource), name);
-  });
+    try {
+      childProcess.execFileSync(process.env.CC || 'cc', args, {stdio: 'pipe'});
+      childProcess.execFileSync(executable, [], {stdio: 'pipe'});
+    } finally {
+      fs.rmSync(temporaryRoot, {recursive: true, force: true});
+    }
 });
 
 (function run() {

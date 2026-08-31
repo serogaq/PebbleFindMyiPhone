@@ -5,6 +5,9 @@ outputs:
   python-version:
     description: Pinned Python version
     value: ${{ steps.versions.outputs.python-version }}
+  python-base-image:
+    description: Digest-pinned Python base image
+    value: ${{ steps.versions.outputs.python-base-image }}
   node-version:
     description: Pinned Node.js version
     value: ${{ steps.versions.outputs.node-version }}
@@ -33,6 +36,7 @@ runs:
       run: |
         set -euo pipefail
         PYTHON_VERSION=
+        PYTHON_BASE_IMAGE=
         NODE_VERSION=
         UV_VERSION=
         PEBBLE_TOOL_VERSION=
@@ -44,7 +48,7 @@ runs:
 
         while IFS='=' read -r key value; do
           case "$key" in
-            PYTHON_VERSION|NODE_VERSION|UV_VERSION|PEBBLE_TOOL_VERSION|PEBBLE_SDK_VERSION|PIP_AUDIT_VERSION|ACTIONLINT_VERSION|ZIZMOR_VERSION)
+            PYTHON_VERSION|PYTHON_BASE_IMAGE|NODE_VERSION|UV_VERSION|PEBBLE_TOOL_VERSION|PEBBLE_SDK_VERSION|PIP_AUDIT_VERSION|ACTIONLINT_VERSION|ZIZMOR_VERSION)
               if [[ "$seen_keys" == *" $key "* ]]; then
                 printf 'error: duplicate key in toolchain.env: %s\n' "$key" >&2
                 exit 1
@@ -77,8 +81,14 @@ runs:
           fi
         done
 
+        if [[ ! "$PYTHON_BASE_IMAGE" =~ ^python:[0-9]+\.[0-9]+\.[0-9]+-slim-bookworm@sha256:[0-9a-f]{64}$ ]]; then
+          printf 'error: invalid PYTHON_BASE_IMAGE in toolchain.env: %s\n' "$PYTHON_BASE_IMAGE" >&2
+          exit 1
+        fi
+
         {
           printf 'python-version=%s\n' "$PYTHON_VERSION"
+          printf 'python-base-image=%s\n' "$PYTHON_BASE_IMAGE"
           printf 'node-version=%s\n' "$NODE_VERSION"
           printf 'uv-version=%s\n' "$UV_VERSION"
           printf 'pebble-tool-version=%s\n' "$PEBBLE_TOOL_VERSION"

@@ -1,27 +1,7 @@
 #include <pebble.h>
 
 #include "localization.auto.h"
-
-typedef enum {
-  REQUEST_CHECK_STATUS = 1,
-  REQUEST_PLAY_SOUND = 2,
-} RequestKind;
-
-typedef enum {
-  RESULT_OK = 0,
-  RESULT_CONFIG_MISSING = 1,
-  RESULT_CONFIG_INVALID = 2,
-  RESULT_BACKEND_UNAVAILABLE = 3,
-  RESULT_API_UNAUTHORIZED = 4,
-  RESULT_APPLE_AUTH_REQUIRED = 5,
-  RESULT_TARGET_NOT_FOUND = 6,
-  RESULT_SOUND_UNAVAILABLE = 7,
-  RESULT_RATE_LIMITED = 8,
-  RESULT_DEVICE_LOOKUP_FAILED = 9,
-  RESULT_OUTCOME_UNKNOWN = 10,
-  RESULT_APPLE_REQUEST_FAILED = 11,
-  RESULT_API_ERROR = 12,
-} ResultCode;
+#include "state_machine.h"
 
 static Window *s_window;
 static TextLayer *s_title_layer;
@@ -31,10 +11,7 @@ static AppTimer *s_animation_timer;
 static AppTimer *s_success_timer;
 static AppTimer *s_request_timer;
 static AppTimer *s_startup_timer;
-static uint32_t s_sequence;
-static uint32_t s_pending_sequence;
-static RequestKind s_pending_kind;
-static bool s_busy;
+static AppState s_state;
 static uint8_t s_animation_step;
 
 static void prv_cancel_timer(AppTimer **timer) {
@@ -51,7 +28,7 @@ static void prv_set_screen(const char *title, const char *body, const char *foot
 }
 
 static void prv_show_ready(void) {
-  s_busy = false;
+  app_state_finish(&s_state);
   prv_cancel_timer(&s_animation_timer);
   prv_cancel_timer(&s_request_timer);
   prv_set_screen(
@@ -62,7 +39,7 @@ static void prv_show_ready(void) {
 
 static void prv_animation_tick(void *context) {
   static char buffer[32];
-  const char *base = s_pending_kind == REQUEST_PLAY_SOUND
+  const char *base = s_state.pending_kind == REQUEST_PLAY_SOUND
                          ? localization_get(WATCH_STRING_SENDING)
                          : localization_get(WATCH_STRING_CHECKING);
   s_animation_step = (s_animation_step + 1) % 4;
@@ -72,7 +49,7 @@ static void prv_animation_tick(void *context) {
 }
 
 static void prv_start_animation(RequestKind kind) {
-  s_pending_kind = kind;
+  s_state.pending_kind = kind;
   s_animation_step = 0;
   prv_cancel_timer(&s_animation_timer);
   prv_animation_tick(NULL);
@@ -128,7 +105,7 @@ static void prv_show_error(ResultCode code) {
       break;
   }
 
-  s_busy = false;
+  app_state_finish(&s_state);
   prv_cancel_timer(&s_animation_timer);
   prv_cancel_timer(&s_request_timer);
   prv_set_screen(localization_get(WATCH_STRING_APP_TITLE), body, footer);
@@ -141,7 +118,7 @@ static void prv_success_timeout(void *context) {
 }
 
 static void prv_show_success(void) {
-  s_busy = false;
+  app_state_finish(&s_state);
   prv_cancel_timer(&s_animation_timer);
   prv_cancel_timer(&s_request_timer);
   prv_cancel_timer(&s_success_timer);
@@ -159,7 +136,7 @@ static void prv_request_timeout(void *context) {
 }
 
 static void prv_send_request(RequestKind kind) {
-  if (s_busy) {
+  if (!app_state_can_start(&s_state)) {
     return;
   }
 
@@ -170,15 +147,10 @@ static void prv_send_request(RequestKind kind) {
     return;
   }
 
-  s_sequence++;
-  if (s_sequence == 0) {
-    s_sequence = 1;
-  }
-  s_pending_sequence = s_sequence;
-  s_pending_kind = kind;
-  s_busy = true;
+  uint32_t sequence = 0;
+  app_state_begin(&s_state, kind, &sequence);
   dict_write_uint8(iterator, MESSAGE_KEY_REQUEST_KIND, (uint8_t)kind);
-  dict_write_uint32(iterator, MESSAGE_KEY_REQUEST_SEQ, s_pending_sequence);
+  dict_write_uint32(iterator, MESSAGE_KEY_REQUEST_SEQ, sequence);
   dict_write_end(iterator);
 
   prv_start_animation(kind);
@@ -198,13 +170,13 @@ static void prv_startup_request(void *context) {
   s_startup_timer = NULL;
   // A user can double-click before the cold-start health timer fires. Never
   // replace an in-flight Play Sound sequence with the background health check.
-  if (!s_busy) {
+  if (app_state_can_start(&s_state)) {
     prv_send_request(REQUEST_CHECK_STATUS);
   }
 }
 
 static void prv_select_multi_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (!s_busy) {
+  if (app_state_can_start(&s_state)) {
     prv_cancel_timer(&s_success_timer);
     prv_send_request(REQUEST_PLAY_SOUND);
   }
@@ -226,26 +198,20 @@ static void prv_inbox_received(DictionaryIterator *iterator, void *context) {
   uint32_t sequence = sequence_tuple->value->uint32;
   int32_t kind_value = kind_tuple->value->int32;
   int32_t result_value = result_tuple->value->int32;
-  if (kind_value < REQUEST_CHECK_STATUS || kind_value > REQUEST_PLAY_SOUND ||
-      result_value < RESULT_OK || result_value > RESULT_API_ERROR) {
-    APP_LOG(APP_LOG_LEVEL_WARNING, "Invalid AppMessage response values");
-    return;
-  }
-
-  RequestKind kind = (RequestKind)kind_value;
-  ResultCode result = (ResultCode)result_value;
-  if (sequence != s_pending_sequence || kind != s_pending_kind) {
-    return;
-  }
-
-  if (result == RESULT_OK) {
-    if (kind == REQUEST_PLAY_SOUND) {
-      prv_show_success();
-    } else {
+  StateDecision decision = app_state_receive(&s_state, sequence, kind_value, result_value);
+  switch (decision.action) {
+    case STATE_ACTION_READY:
       prv_show_ready();
-    }
-  } else {
-    prv_show_error(result);
+      break;
+    case STATE_ACTION_SUCCESS:
+      prv_show_success();
+      break;
+    case STATE_ACTION_ERROR:
+      prv_show_error(decision.error);
+      break;
+    case STATE_ACTION_NONE:
+    default:
+      break;
   }
 }
 
@@ -257,11 +223,9 @@ static void prv_outbox_failed(DictionaryIterator *iterator, AppMessageResult rea
 
 static void prv_inbox_dropped(AppMessageResult reason, void *context) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "AppMessage inbox dropped: %d", (int)reason);
-  if (s_busy) {
-    // A dropped Play Sound response may have followed a successfully dispatched
-    // HTTP request, so presenting it as safely retryable would be dangerous.
-    prv_show_error(s_pending_kind == REQUEST_PLAY_SOUND ? RESULT_OUTCOME_UNKNOWN
-                                                        : RESULT_BACKEND_UNAVAILABLE);
+  StateDecision decision = app_state_inbox_dropped(&s_state);
+  if (decision.action == STATE_ACTION_ERROR) {
+    prv_show_error(decision.error);
   }
 }
 
@@ -313,6 +277,7 @@ static void prv_window_unload(Window *window) {
 }
 
 static void prv_init(void) {
+  app_state_init(&s_state);
   localization_init(i18n_get_system_locale());
 
   s_window = window_create();

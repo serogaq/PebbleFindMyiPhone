@@ -4,6 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -36,10 +38,10 @@ jobs:
         run: |
           backend=false
           app=false
-          if test "$EVENT_NAME" = merge_group; then
+          if test "$EVENT_NAME" = merge_group || test "$EVENT_NAME" = push; then
             backend=true
             app=true
-            printf '%s\n' 'Merge queue validation runs both project groups.' >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' 'Main and merge queue validation run both project groups.' >> "$GITHUB_STEP_SUMMARY"
           else
             git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-files"
             while IFS= read -r file; do
@@ -54,7 +56,7 @@ jobs:
                   backend=true
                   app=true
                   ;;
-                LICENSE.md|NOTICE)
+                LICENSE.md|NOTICE|THIRD_PARTY_NOTICES)
                   backend=true
                   app=true
                   ;;
