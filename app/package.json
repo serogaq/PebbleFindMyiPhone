@@ -1,7 +1,7 @@
 {
   "name": "pebble-find-my-iphone",
   "author": "serogaq",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Trigger Find My iPhone Play Sound from your Pebble watch",
   "keywords": ["pebble-app", "find-my", "iphone"],
   "private": true,

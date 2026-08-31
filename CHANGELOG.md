@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0 - 2026-08-31
+
+- Improved Play Sound reliability: the watch now ignores stale responses and
+  reports dropped or ambiguous command results without suggesting an unsafe
+  retry.
+- Limited the automatic device-lookup retry to responses explicitly confirmed
+  by the backend as safe and pre-dispatch.
+- Added consistent user-facing Apple authentication and MFA errors instead of
+  exposing internal exceptions.
+- Replaced the Settings build-time label with the source commit and its commit
+  timestamp, making the installed app version easier to identify.
+
 ## 1.1.0 - 2026-08-31 / app
 
 - Added automatic English and Russian localization for the Pebble watchapp and
