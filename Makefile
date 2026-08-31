@@ -18,6 +18,7 @@ APP_DEPS_STAMP = app/node_modules/.package-lock.stamp
 # Pebble Time 2. Override with, for example, PLATFORM=gabbro.
 PLATFORM ?= emery
 PBW ?= app/build/app.pbw
+IP ?=
 QEMU_FLAGS ?=
 LOG_FLAGS ?=
 BACKEND_IMAGE ?= pebble-find-my-iphone-backend
@@ -39,7 +40,7 @@ help:
 		'  make backend-build [BACKEND_IMAGE=name] [BACKEND_TAG=tag] [BACKEND_PLATFORMS=list]' \
 		'  make app-build                    Build app/build/app.pbw' \
 		'  make app-qemu [PLATFORM=emery] [PBW=path] [QEMU_FLAGS=--vnc]' \
-		'  make app-install [PBW=path] [LOG_FLAGS=--no-color]'
+		'  make app-install [IP=phone-ip] [PBW=path] [LOG_FLAGS=--no-color]'
 
 $(BACKEND_DEPS_STAMP): backend/requirements.txt backend/requirements-dev.txt
 	@command -v "$(UV)" >/dev/null 2>&1 || { printf '%s\n' 'error: uv is required'; exit 1; }
@@ -100,7 +101,14 @@ app-qemu:
 app-install:
 	@command -v "$(PEBBLE)" >/dev/null 2>&1 || { printf '%s\n' 'error: pebble CLI is required'; exit 1; }
 	@test -f "$(PBW)" || { printf 'error: PBW not found: %s\nRun make app-build first or set PBW=/path/to/app.pbw\n' "$(PBW)"; exit 1; }
-	@"$(PEBBLE)" login --status >/dev/null 2>&1 || { printf '%s\n' 'error: Pebble CLI is not logged in; run pebble login'; exit 1; }
-	"$(PEBBLE)" ping --cloudpebble
-	"$(PEBBLE)" install "$(PBW)" --cloudpebble
-	"$(PEBBLE)" logs --cloudpebble $(LOG_FLAGS)
+	@if test -n "$(IP)"; then \
+		printf 'Using local Pebble developer connection at %s\n' "$(IP)"; \
+		"$(PEBBLE)" ping --phone "$(IP)"; \
+		"$(PEBBLE)" install "$(PBW)" --phone "$(IP)"; \
+		"$(PEBBLE)" logs --phone "$(IP)" $(LOG_FLAGS); \
+	else \
+		"$(PEBBLE)" login --status >/dev/null 2>&1 || { printf '%s\n' 'error: Pebble CLI is not logged in; run pebble login'; exit 1; }; \
+		"$(PEBBLE)" ping --cloudpebble; \
+		"$(PEBBLE)" install "$(PBW)" --cloudpebble; \
+		"$(PEBBLE)" logs --cloudpebble $(LOG_FLAGS); \
+	fi
