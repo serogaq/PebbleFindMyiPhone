@@ -1,0 +1,76 @@
+name: Read toolchain versions
+description: Export the repository's pinned toolchain versions as action outputs
+
+outputs:
+  python-version:
+    description: Pinned Python version
+    value: ${{ steps.versions.outputs.python-version }}
+  node-version:
+    description: Pinned Node.js version
+    value: ${{ steps.versions.outputs.node-version }}
+  uv-version:
+    description: Pinned uv version
+    value: ${{ steps.versions.outputs.uv-version }}
+  pebble-tool-version:
+    description: Pinned pebble-tool version
+    value: ${{ steps.versions.outputs.pebble-tool-version }}
+  pebble-sdk-version:
+    description: Pinned Pebble SDK version
+    value: ${{ steps.versions.outputs.pebble-sdk-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load and validate toolchain.env
+      id: versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        PYTHON_VERSION=
+        NODE_VERSION=
+        UV_VERSION=
+        PEBBLE_TOOL_VERSION=
+        PEBBLE_SDK_VERSION=
+        PIP_AUDIT_VERSION=
+        seen_keys=' '
+
+        while IFS='=' read -r key value; do
+          case "$key" in
+            PYTHON_VERSION|NODE_VERSION|UV_VERSION|PEBBLE_TOOL_VERSION|PEBBLE_SDK_VERSION|PIP_AUDIT_VERSION)
+              if [[ "$seen_keys" == *" $key "* ]]; then
+                printf 'error: duplicate key in toolchain.env: %s\n' "$key" >&2
+                exit 1
+              fi
+              seen_keys+="$key "
+              printf -v "$key" '%s' "$value"
+              ;;
+            '')
+              ;;
+            *)
+              printf 'error: unexpected key in toolchain.env: %s\n' "$key" >&2
+              exit 1
+              ;;
+          esac
+        done < "$GITHUB_WORKSPACE/toolchain.env"
+
+        for name in \
+          PYTHON_VERSION \
+          NODE_VERSION \
+          UV_VERSION \
+          PEBBLE_TOOL_VERSION \
+          PEBBLE_SDK_VERSION \
+          PIP_AUDIT_VERSION; do
+          value="${!name}"
+          if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            printf 'error: invalid %s in toolchain.env: %s\n' "$name" "$value" >&2
+            exit 1
+          fi
+        done
+
+        {
+          printf 'python-version=%s\n' "$PYTHON_VERSION"
+          printf 'node-version=%s\n' "$NODE_VERSION"
+          printf 'uv-version=%s\n' "$UV_VERSION"
+          printf 'pebble-tool-version=%s\n' "$PEBBLE_TOOL_VERSION"
+          printf 'pebble-sdk-version=%s\n' "$PEBBLE_SDK_VERSION"
+        } >> "$GITHUB_OUTPUT"

@@ -40,10 +40,10 @@ jobs:
               backend/*)
                 backend=true
                 ;;
-              app/*|.nvmrc)
+              app/*)
                 app=true
                 ;;
-              Makefile|.github/workflows/*)
+              Makefile|toolchain.env|.github/dependabot.yml|.github/workflows/*|.github/actions/*)
                 backend=true
                 app=true
                 ;;
@@ -76,15 +76,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read toolchain versions
+        id: toolchain
+        uses: $/.github/actions/toolchain-versions
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: ${{ steps.toolchain.outputs.python-version }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.12.1"
+          version: ${{ steps.toolchain.outputs.uv-version }}
           enable-cache: true
 
       - name: Run backend tests
@@ -104,10 +108,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read toolchain versions
+        id: toolchain
+        uses: $/.github/actions/toolchain-versions
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ steps.toolchain.outputs.node-version }}
           cache: npm
           cache-dependency-path: app/package-lock.json
 

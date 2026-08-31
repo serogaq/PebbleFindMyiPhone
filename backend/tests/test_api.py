@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 from helpers import settings
 
+from findmy_backend import __version__
 from findmy_backend.api import create_app
 from findmy_backend.icloud import AppleDeviceLookupFailed, AuthenticationRequired
 from findmy_backend.service import (
@@ -44,6 +45,12 @@ def _client(controller=None):
         create_app(settings(api_token=TOKEN), controller or Controller()),
         raise_server_exceptions=False,
     )
+
+
+def test_api_uses_package_version():
+    app = create_app(settings(api_token=TOKEN), Controller())
+
+    assert app.version == __version__
 
 
 def test_health_is_public_but_contains_no_icloud_state():

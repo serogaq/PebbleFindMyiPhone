@@ -1,3 +1,5 @@
+# Fallback for direct Docker builds; make backend-build overrides this value
+# from the repository's toolchain.env.
 ARG PYTHON_BASE_IMAGE=python:3.12.14-slim-bookworm
 FROM ${PYTHON_BASE_IMAGE}
 

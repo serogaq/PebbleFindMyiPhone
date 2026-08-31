@@ -15,8 +15,6 @@ concurrency:
 env:
   APP_UUID: 91d0ef11-0f9b-424a-9876-d96b6067e388
   APPSTORE_API_BASE: https://appstore-api.repebble.com
-  PEBBLE_TOOL_VERSION: 5.0.40
-  PEBBLE_SDK_VERSION: 4.33.1
 
 jobs:
   validate-tag:
@@ -86,10 +84,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read toolchain versions
+        id: toolchain
+        uses: $/.github/actions/toolchain-versions
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ steps.toolchain.outputs.node-version }}
           package-manager-cache: false
 
       - name: Run app checks
@@ -105,26 +107,34 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read toolchain versions
+        id: toolchain
+        uses: $/.github/actions/toolchain-versions
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ steps.toolchain.outputs.node-version }}
           package-manager-cache: false
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: ${{ steps.toolchain.outputs.python-version }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.12.1"
+          version: ${{ steps.toolchain.outputs.uv-version }}
           enable-cache: false
 
       - name: Install Pebble toolchain
+        env:
+          PEBBLE_TOOL_VERSION: ${{ steps.toolchain.outputs.pebble-tool-version }}
+          PEBBLE_SDK_VERSION: ${{ steps.toolchain.outputs.pebble-sdk-version }}
+          PYTHON_VERSION: ${{ steps.toolchain.outputs.python-version }}
         run: |
-          uv tool install --python 3.12 "pebble-tool==$PEBBLE_TOOL_VERSION"
+          uv tool install --python "$PYTHON_VERSION" "pebble-tool==$PEBBLE_TOOL_VERSION"
           pebble sdk install "$PEBBLE_SDK_VERSION"
           pebble --version
           pebble sdk list
@@ -252,6 +262,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read toolchain versions
+        id: toolchain
+        uses: $/.github/actions/toolchain-versions
+
       - name: Download release notes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -261,27 +275,33 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ steps.toolchain.outputs.node-version }}
           package-manager-cache: false
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: ${{ steps.toolchain.outputs.python-version }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.12.1"
+          version: ${{ steps.toolchain.outputs.uv-version }}
           enable-cache: false
 
       - name: Install Pebble toolchain
+        env:
+          PEBBLE_TOOL_VERSION: ${{ steps.toolchain.outputs.pebble-tool-version }}
+          PEBBLE_SDK_VERSION: ${{ steps.toolchain.outputs.pebble-sdk-version }}
+          PYTHON_VERSION: ${{ steps.toolchain.outputs.python-version }}
         run: |
-          uv tool install --python 3.12 "pebble-tool==$PEBBLE_TOOL_VERSION"
+          uv tool install --python "$PYTHON_VERSION" "pebble-tool==$PEBBLE_TOOL_VERSION"
           pebble sdk install "$PEBBLE_SDK_VERSION"
           make app-deps
 
       - name: Patch pebble publish to preserve draft releases
+        env:
+          PEBBLE_TOOL_VERSION: ${{ steps.toolchain.outputs.pebble-tool-version }}
         run: |
           tool_python="$(uv tool dir)/pebble-tool/bin/python"
           publish_module="$("$tool_python" -c 'import pathlib; import pebble_tool.commands.publish as publish; print(pathlib.Path(publish.__file__).resolve())')"
@@ -293,7 +313,7 @@ jobs:
 
           if test "$published_count" -ne 2 || test "$visible_count" -ne 1; then
             printf '%s\n' \
-              'error: pebble-tool publish.py no longer matches the expected 5.0.40 code; refusing to apply the draft-release patch' >&2
+              "error: pebble-tool publish.py no longer matches the expected $PEBBLE_TOOL_VERSION code; refusing to apply the draft-release patch" >&2
             exit 1
           fi
 

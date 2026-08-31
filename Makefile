@@ -1,7 +1,9 @@
 .POSIX:
 SHELL = /bin/sh
 
-PYTHON ?= python3
+include toolchain.env
+
+PYTHON ?= $(PYTHON_VERSION)
 UV ?= uv
 UVX ?= uvx
 NPM ?= npm
@@ -25,9 +27,10 @@ BACKEND_IMAGE ?= pebble-find-my-iphone-backend
 BACKEND_TAG ?= latest
 BACKEND_PLATFORMS ?=
 BACKEND_BUILD_FLAGS ?=
+PYTHON_BASE_IMAGE ?= python:$(PYTHON_VERSION)-slim-bookworm
 
-.PHONY: help backend-deps app-node-check app-deps backend-test backend-audit app-test \
-	app-eslint app-audit backend-build app-build app-qemu app-install
+.PHONY: help backend-deps app-node-check app-deps backend-test backend-audit \
+	app-test app-eslint app-audit backend-build app-build app-qemu app-install
 
 help:
 	@printf '%s\n' \
@@ -68,7 +71,7 @@ backend-audit: backend-deps
 	cd backend && "$(CURDIR)/$(BACKEND_VENV)/bin/ruff" format --check src tests
 	cd backend && "$(CURDIR)/$(BACKEND_VENV)/bin/ruff" check src tests
 	cd backend && "$(CURDIR)/$(BACKEND_VENV)/bin/bandit" -q -r src
-	"$(UVX)" --from pip-audit==2.10.1 pip-audit -r backend/requirements.lock
+	"$(UVX)" --from pip-audit==$(PIP_AUDIT_VERSION) pip-audit -r backend/requirements.lock
 	cd backend && APPLE_ID=ci@example.invalid API_TOKEN=00000000000000000000000000000000 TARGET_DEVICE_ID=ci-target $(DOCKER_COMPOSE) config --quiet
 	cd backend && APPLE_ID=ci@example.invalid API_TOKEN=00000000000000000000000000000000 TARGET_DEVICE_ID=ci-target $(DOCKER_COMPOSE) -f docker-compose.yaml -f docker-compose.local.yaml config --quiet
 	cd backend && APPLE_ID=ci@example.invalid API_TOKEN=00000000000000000000000000000000 TARGET_DEVICE_ID=ci-target $(DOCKER_COMPOSE) -f docker-compose.yaml -f docker-compose.secrets.yaml config --quiet
@@ -85,9 +88,9 @@ app-audit: app-deps
 
 backend-build:
 	@if test -n "$(BACKEND_PLATFORMS)"; then \
-		"$(DOCKER)" buildx build --platform "$(BACKEND_PLATFORMS)" $(BACKEND_BUILD_FLAGS) --build-arg "IMAGE_VERSION=$(BACKEND_TAG)" --tag "$(BACKEND_IMAGE):$(BACKEND_TAG)" --file backend/Dockerfile .; \
+		"$(DOCKER)" buildx build --platform "$(BACKEND_PLATFORMS)" $(BACKEND_BUILD_FLAGS) --build-arg "PYTHON_BASE_IMAGE=$(PYTHON_BASE_IMAGE)" --build-arg "IMAGE_VERSION=$(BACKEND_TAG)" --tag "$(BACKEND_IMAGE):$(BACKEND_TAG)" --file backend/Dockerfile .; \
 	else \
-		"$(DOCKER)" build $(BACKEND_BUILD_FLAGS) --build-arg "IMAGE_VERSION=$(BACKEND_TAG)" --tag "$(BACKEND_IMAGE):$(BACKEND_TAG)" --file backend/Dockerfile .; \
+		"$(DOCKER)" build $(BACKEND_BUILD_FLAGS) --build-arg "PYTHON_BASE_IMAGE=$(PYTHON_BASE_IMAGE)" --build-arg "IMAGE_VERSION=$(BACKEND_TAG)" --tag "$(BACKEND_IMAGE):$(BACKEND_TAG)" --file backend/Dockerfile .; \
 	fi
 
 app-build: app-deps

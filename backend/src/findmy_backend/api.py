@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import __version__
 from .config import Settings
 from .icloud import (
     AppleDeviceLookupFailed,
@@ -84,7 +85,7 @@ def create_app(
 
     app = FastAPI(
         title="Find My iPhone backend",
-        version="1.0.0",
+        version=__version__,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
