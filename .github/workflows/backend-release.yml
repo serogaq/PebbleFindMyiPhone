@@ -117,7 +117,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push versioned image
+      - name: Build and push versioned and latest images
         env:
           VERSION: ${{ needs.validate-tag.outputs.version }}
         run: |
@@ -125,9 +125,18 @@ jobs:
             BACKEND_IMAGE="$IMAGE_NAME" \
             BACKEND_TAG="$VERSION" \
             BACKEND_PLATFORMS=linux/amd64,linux/arm64 \
-            BACKEND_BUILD_FLAGS=--push
+            BACKEND_BUILD_FLAGS="--push --tag $IMAGE_NAME:latest"
 
-      - name: Inspect published manifest
+      - name: Inspect published manifests
         env:
           VERSION: ${{ needs.validate-tag.outputs.version }}
-        run: docker buildx imagetools inspect "$IMAGE_NAME:$VERSION"
+        run: |
+          version_digest="$(docker buildx imagetools inspect "$IMAGE_NAME:$VERSION" --format '{{.Manifest.Digest}}')"
+          latest_digest="$(docker buildx imagetools inspect "$IMAGE_NAME:latest" --format '{{.Manifest.Digest}}')"
+          if test "$version_digest" != "$latest_digest"; then
+            printf 'error: %s:%s and %s:latest have different digests\n' \
+              "$IMAGE_NAME" "$VERSION" "$IMAGE_NAME" >&2
+            exit 1
+          fi
+          docker buildx imagetools inspect "$IMAGE_NAME:$VERSION"
+          docker buildx imagetools inspect "$IMAGE_NAME:latest"
