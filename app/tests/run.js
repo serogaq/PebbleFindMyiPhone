@@ -184,6 +184,21 @@ test('RePebble description contains only user-facing store copy', function() {
   assert.strictEqual(description.indexOf('PolyForm'), -1);
 });
 
+test('release workflow keeps legal notice out of RePebble release notes', function() {
+  var workflow = fs.readFileSync(
+    path.join(__dirname, '../../.github/workflows/app-release.yml'), 'utf8');
+  var repebbleJob = workflow.slice(workflow.indexOf('  repebble-draft:'));
+
+  assert.strictEqual(workflow.indexOf('dist/github-release-notes.md'), -1);
+  assert(workflow.indexOf(
+    'github_release_notes="$RUNNER_TEMP/github-release-notes.md"') !== -1);
+  assert.strictEqual(
+    (workflow.match(/--notes-file "\$github_release_notes"/g) || []).length, 2);
+  assert(workflow.indexOf('cat dist/NOTICE') !== -1);
+  assert(repebbleJob.indexOf('--release-notes "$(cat dist/release-notes.md)"') !== -1);
+  assert.strictEqual(repebbleJob.indexOf('github_release_notes'), -1);
+});
+
 test('manual Clay setup injects localized loader strings before generating URL', function() {
   var source = fs.readFileSync(path.join(__dirname, '../src/pkjs/index.js'), 'utf8');
   var metadata = source.indexOf('activeClay.meta.userData = userData');
