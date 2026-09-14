@@ -18,7 +18,7 @@
     "@rebble/clay": "1.1.0"
   },
   "devDependencies": {
-    "eslint": "10.9.1"
+    "eslint": "10.10.0"
   },
   "pebble": {
     "displayName": "Find My iPhone",
