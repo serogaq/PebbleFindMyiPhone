@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 - 2026-09-15 / backend
+
+- Updating dependencies to close vulnerabilities
+
 ## 1.2.0 - 2026-08-31
 
 - Improved Play Sound reliability: the watch now ignores stale responses and
