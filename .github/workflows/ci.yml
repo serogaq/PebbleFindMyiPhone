@@ -60,9 +60,6 @@ jobs:
                   backend=true
                   app=true
                   ;;
-                CHANGELOG.md)
-                  app=true
-                  ;;
                 .dockerignore)
                   backend=true
                   ;;
