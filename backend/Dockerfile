@@ -18,6 +18,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_ROOT_USER_ACTION=ignore
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade libpcre2-8-0 \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" ge 10.42-1+deb12u1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN if command -v groupadd >/dev/null 2>&1; then \
         groupadd --gid 10001 findmy \
         && useradd --uid 10001 --gid findmy --no-create-home --home-dir /nonexistent findmy; \
